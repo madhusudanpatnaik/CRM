@@ -1,0 +1,6 @@
+{
+  "name": "TurboAutoparts Catalog & CRM",
+  "description": "An elegant e-commerce catalog with vehicle fitment filtering paired with a comprehensive CRM, Sales Dashboard, Inventory Tracking and Lead Management suite.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
