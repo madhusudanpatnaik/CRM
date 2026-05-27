@@ -31,6 +31,7 @@ import {
   Send,
   Trash2,
   ChevronLeft,
+  Download,
 } from 'lucide-react';
 import {
   Part,
@@ -721,6 +722,74 @@ export default function CrmPortal({
     setNewPartCost(0);
     setNewPartImage('https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop');
     setImageUploadMethod('presets');
+  };
+
+  // Export to CSV function for module-inventory
+  const handleExportCSV = () => {
+    const query = inventorySearch.toLowerCase();
+    const filteredParts = parts.filter(p => {
+      if (!query) return true;
+      return (
+        (p.name && p.name.toLowerCase().includes(query)) ||
+        (p.sku && p.sku.toLowerCase().includes(query)) ||
+        (p.brand && p.brand.toLowerCase().includes(query)) ||
+        (p.warehouseLocation && p.warehouseLocation.toLowerCase().includes(query)) ||
+        (p.oemNumber && p.oemNumber.toLowerCase().includes(query))
+      );
+    });
+
+    const headers = [
+      'ID',
+      'Category',
+      'Name',
+      'SKU',
+      'Brand',
+      'OEM Number',
+      'Condition',
+      'Price ($)',
+      'Cost ($)',
+      'Stock Count',
+      'Warehouse Grid Location',
+      'Weight (lbs)'
+    ];
+
+    const formatValue = (val: any) => {
+      if (val === null || val === undefined) return '';
+      const stringVal = String(val);
+      if (stringVal.includes(',') || stringVal.includes('"') || stringVal.includes('\n')) {
+        return `"${stringVal.replace(/"/g, '""')}"`;
+      }
+      return stringVal;
+    };
+
+    const rows = filteredParts.map(p => [
+      p.id,
+      p.category,
+      p.name,
+      p.sku,
+      p.brand,
+      p.oemNumber || '',
+      p.condition,
+      p.price,
+      p.cost || '',
+      p.stock,
+      p.warehouseLocation || '',
+      p.weightLbs || ''
+    ]);
+
+    const csvContent = [
+      headers.map(formatValue).join(','),
+      ...rows.map(row => row.map(formatValue).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `inventory_export_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   // Interactive Live Chat response in CRM Tickets module
@@ -2504,13 +2573,23 @@ export default function CrmPortal({
                   />
                 </div>
 
-                <button
-                  id="add-part-modal-btn"
-                  onClick={() => setIsAddPartModalOpen(true)}
-                  className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold font-mono uppercase tracking-wider flex items-center gap-1 shrink-0"
-                >
-                  <Plus className="w-4 h-4" /> Add Part catalog
-                </button>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    id="export-csv-btn"
+                    onClick={handleExportCSV}
+                    className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900 rounded-lg text-xs font-bold font-mono uppercase tracking-wider flex items-center gap-1.5 transition"
+                  >
+                    <Download className="w-4.5 h-4.5 text-slate-500" /> Export to CSV
+                  </button>
+
+                  <button
+                    id="add-part-modal-btn"
+                    onClick={() => setIsAddPartModalOpen(true)}
+                    className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold font-mono uppercase tracking-wider flex items-center gap-1 shrink-0"
+                  >
+                    <Plus className="w-4 h-4" /> Add Part catalog
+                  </button>
+                </div>
               </div>
 
               {/* Add Part Dialog Overlay Modal */}
