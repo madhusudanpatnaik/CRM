@@ -173,7 +173,7 @@ export default function UsedArrivalsCarousel({ onAddToCart, onViewDetails, onScr
             return (
               <div
                 key={part.id}
-                className="w-72 bg-white rounded-xl border border-slate-200 flex-none flex flex-col justify-between overflow-hidden shadow-xs hover:shadow-md transition group"
+                className="w-72 bg-white rounded-xl border border-slate-200 flex-none flex flex-col justify-between overflow-hidden shadow-xs hover:shadow-xl hover:-translate-y-1.5 hover:border-slate-300/80 transition-all duration-300 group"
               >
                 <div className="relative h-44 bg-slate-100 flex items-center justify-center overflow-hidden">
                   <img
@@ -279,7 +279,7 @@ export default function UsedArrivalsCarousel({ onAddToCart, onViewDetails, onScr
             return (
               <div
                 key={part.id}
-                className="w-72 bg-white rounded-xl border border-slate-200 flex-none flex flex-col justify-between overflow-hidden shadow-xs hover:shadow-md transition group"
+                className="w-72 bg-white rounded-xl border border-slate-200 flex-none flex flex-col justify-between overflow-hidden shadow-xs hover:shadow-xl hover:-translate-y-1.5 hover:border-slate-300/80 transition-all duration-300 group"
               >
                 <div className="relative h-44 bg-slate-100 flex items-center justify-center overflow-hidden">
                   <img

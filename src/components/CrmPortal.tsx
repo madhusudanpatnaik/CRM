@@ -169,6 +169,9 @@ export default function CrmPortal({
   const [newPartFitModels, setNewPartFitModels] = useState('');
   const [newPartFitYearStart, setNewPartFitYearStart] = useState(2015);
   const [newPartFitYearEnd, setNewPartFitYearEnd] = useState(2025);
+  const [newPartImage, setNewPartImage] = useState('https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop');
+  const [imageUploadMethod, setImageUploadMethod] = useState<'presets' | 'url' | 'file'>('presets');
+  const [dragActive, setDragActive] = useState<boolean>(false);
 
   // Support Inbox Interactive Active Ticket
   const [activeTicketId, setActiveTicketId] = useState<string | null>(tickets[0]?.id || null);
@@ -701,7 +704,7 @@ export default function CrmPortal({
         engines: ['2.5L Turbo', '2.0L Naturally Aspirated'],
       },
       description: 'Custom added automotive replacement component with specialized fitment keys mapped inside current workflow databases.',
-      image: 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?q=80&w=600&auto=format&fit=crop',
+      image: newPartImage || 'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop',
       oemNumber: newPartOem,
       brand: newPartBrand,
       weightLbs: newPartWeight || 25,
@@ -716,6 +719,8 @@ export default function CrmPortal({
     setNewPartOem('');
     setNewPartPrice(0);
     setNewPartCost(0);
+    setNewPartImage('https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop');
+    setImageUploadMethod('presets');
   };
 
   // Interactive Live Chat response in CRM Tickets module
@@ -2556,7 +2561,23 @@ export default function CrmPortal({
                             <label className="text-slate-500 font-semibold block">Category</label>
                             <select
                               value={newPartCategory}
-                              onChange={(e) => setNewPartCategory(e.target.value)}
+                              onChange={(e) => {
+                                const cat = e.target.value;
+                                setNewPartCategory(cat);
+                                if (imageUploadMethod === 'presets') {
+                                  if (cat === 'Engine') {
+                                    setNewPartImage('https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop');
+                                  } else if (cat === 'Transmission') {
+                                    setNewPartImage('https://images.unsplash.com/photo-1517524206127-48bbd363f3d7?q=80&w=600&auto=format&fit=crop');
+                                  } else if (cat === 'Brakes') {
+                                    setNewPartImage('https://images.unsplash.com/photo-1503376780353-7e6692767b70?q=80&w=600&auto=format&fit=crop');
+                                  } else if (cat === 'Electrical') {
+                                    setNewPartImage('https://images.unsplash.com/photo-1619642751034-765dfdf7c58e?q=80&w=600&auto=format&fit=crop');
+                                  } else {
+                                    setNewPartImage('https://images.unsplash.com/photo-1503376780353-7e6692767b70?q=80&w=600&auto=format&fit=crop');
+                                  }
+                                }
+                              }}
                               className="w-full px-2 py-1.5 border rounded bg-white"
                             >
                               <option value="Engine">Engine</option>
@@ -2646,6 +2667,276 @@ export default function CrmPortal({
                               className="w-full px-2 py-1.5 border rounded"
                             />
                           </div>
+                        </div>
+
+                        {/* ======================= FILE UPLOAD & IMAGE SELECTION MODULE ======================= */}
+                        <div className="bg-slate-50 border border-slate-200 p-3 rounded-lg space-y-3">
+                          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                            <label className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-slate-700">
+                              Product Catalog Media Selection
+                            </label>
+                            <span className="text-[9px] font-medium bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded uppercase font-mono">
+                              Required
+                            </span>
+                          </div>
+
+                          {/* Image Method Switcher Tabs */}
+                          <div className="flex border-b border-slate-200">
+                            <button
+                              type="button"
+                              onClick={() => setImageUploadMethod('presets')}
+                              className={`flex-1 py-1 text-center font-bold font-mono text-[10px] uppercase border-b-2 transition ${
+                                imageUploadMethod === 'presets'
+                                  ? 'border-orange-600 text-orange-600'
+                                  : 'border-transparent text-slate-500 hover:text-slate-800'
+                              }`}
+                            >
+                              Preset Library
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setImageUploadMethod('file')}
+                              className={`flex-1 py-1 text-center font-bold font-mono text-[10px] uppercase border-b-2 transition ${
+                                imageUploadMethod === 'file'
+                                  ? 'border-orange-600 text-orange-600'
+                                  : 'border-transparent text-slate-500 hover:text-slate-800'
+                              }`}
+                            >
+                              Drag & Drop Upload
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setImageUploadMethod('url')}
+                              className={`flex-1 py-1 text-center font-bold font-mono text-[10px] uppercase border-b-2 transition ${
+                                imageUploadMethod === 'url'
+                                  ? 'border-orange-600 text-orange-600'
+                                  : 'border-transparent text-slate-500 hover:text-slate-800'
+                              }`}
+                            >
+                              External Web URL
+                            </button>
+                          </div>
+
+                          {/* Actionable Panels */}
+                          {imageUploadMethod === 'presets' && (
+                            <div className="space-y-2">
+                              <p className="text-[10px] text-slate-500 leading-relaxed font-sans">
+                                Choose one of our verified, royalty-free high-resolution stock templates matching common automotive components:
+                              </p>
+                              <div className="grid grid-cols-2 xs:grid-cols-3 gap-2">
+                                {[
+                                  {
+                                    name: 'Engine Bay',
+                                    url: 'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop',
+                                    label: 'Engine Block / Headers'
+                                  },
+                                  {
+                                    name: 'Transmission',
+                                    url: 'https://images.unsplash.com/photo-1517524206127-48bbd363f3d7?q=80&w=600&auto=format&fit=crop',
+                                    label: 'Gears & Powertrain'
+                                  },
+                                  {
+                                    name: 'Brakes / Suspension',
+                                    url: 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?q=80&w=600&auto=format&fit=crop',
+                                    label: 'Rotors & Calipers'
+                                  },
+                                  {
+                                    name: 'Electrical / Alternator',
+                                    url: 'https://images.unsplash.com/photo-1619642751034-765dfdf7c58e?q=80&w=600&auto=format&fit=crop',
+                                    label: 'Alternators & Sensors'
+                                  },
+                                  {
+                                    name: 'Steering Components',
+                                    url: 'https://images.unsplash.com/photo-1511919884226-fd3cad34687c?q=80&w=600&auto=format&fit=crop',
+                                    label: 'Racks & Pinions'
+                                  },
+                                  {
+                                    name: 'Body / Body panels',
+                                    url: 'https://images.unsplash.com/photo-1617788138017-80ad40651399?q=80&w=600&auto=format&fit=crop',
+                                    label: 'Chassis & Moldings'
+                                  }
+                                ].map((preset) => {
+                                  const isActive = newPartImage === preset.url;
+                                  return (
+                                    <button
+                                      key={preset.name}
+                                      type="button"
+                                      onClick={() => setNewPartImage(preset.url)}
+                                      className={`relative h-20 rounded-lg overflow-hidden border-2 text-left group transition-all duration-200 ${
+                                        isActive
+                                          ? 'border-orange-600 ring-2 ring-orange-100'
+                                          : 'border-slate-200 hover:border-slate-300'
+                                      }`}
+                                    >
+                                      <img
+                                        src={preset.url}
+                                        alt={preset.name}
+                                        referrerPolicy="no-referrer"
+                                        className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
+                                      />
+                                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/30 to-transparent" />
+                                      <div className="absolute bottom-1.5 left-1.5 right-1.5">
+                                        <p className="font-bold text-[9px] text-white truncate font-mono uppercase tracking-tight">
+                                          {preset.name}
+                                        </p>
+                                        <p className="text-[8px] text-slate-300 truncate leading-none">
+                                          {preset.label}
+                                        </p>
+                                      </div>
+                                      {isActive && (
+                                        <div className="absolute top-1 right-1 bg-orange-600 text-white rounded-full p-0.5">
+                                          <svg className="w-2 h-2 fill-none stroke-current stroke-3" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                                          </svg>
+                                        </div>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {imageUploadMethod === 'file' && (
+                            <div className="space-y-3">
+                              {/* Drag and Drop Container */}
+                              <div
+                                onDragOver={(e) => {
+                                  e.preventDefault();
+                                  setDragActive(true);
+                                }}
+                                onDragLeave={(e) => {
+                                  e.preventDefault();
+                                  setDragActive(false);
+                                }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  setDragActive(false);
+                                  if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                                    const file = e.dataTransfer.files[0];
+                                    const objectUrl = URL.createObjectURL(file);
+                                    setNewPartImage(objectUrl);
+                                  }
+                                }}
+                                className={`border-2 border-dashed rounded-lg p-5 text-center transition-all ${
+                                  dragActive
+                                    ? 'border-orange-500 bg-orange-50/20'
+                                    : 'border-slate-300 bg-white hover:border-slate-400'
+                                }`}
+                              >
+                                <input
+                                  type="file"
+                                  id="part-file-uploader"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    if (e.target.files && e.target.files[0]) {
+                                      const file = e.target.files[0];
+                                      const objectUrl = URL.createObjectURL(file);
+                                      setNewPartImage(objectUrl);
+                                    }
+                                  }}
+                                />
+                                <label
+                                  htmlFor="part-file-uploader"
+                                  className="cursor-pointer block space-y-2 py-2"
+                                >
+                                  <svg
+                                    className="mx-auto h-8 w-8 text-slate-400 animate-bounce"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                    strokeWidth={1.5}
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z"
+                                    />
+                                  </svg>
+                                  <div className="text-[11px] text-slate-600">
+                                    <span className="font-semibold text-orange-600 hover:text-orange-700">
+                                      Click to select a file
+                                    </span>{' '}
+                                    or drag-and-drop right here
+                                  </div>
+                                  <p className="text-[9px] text-slate-400">
+                                    PNG, JPG, GIF up to 10MB sizes allowed
+                                  </p>
+                                </label>
+                              </div>
+                            </div>
+                          )}
+
+                          {imageUploadMethod === 'url' && (
+                            <div className="space-y-2">
+                              <label className="text-slate-500 font-semibold block text-[10px]">
+                                Custom Image Direct Link
+                              </label>
+                              <div className="flex gap-2">
+                                <input
+                                  type="url"
+                                  placeholder="https://images.unsplash.com/... or base64 stream"
+                                  value={newPartImage.startsWith('blob:') ? '' : newPartImage}
+                                  onChange={(e) => setNewPartImage(e.target.value)}
+                                  className="flex-1 px-2.5 py-1.5 border rounded-lg text-xs font-mono"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setNewPartImage(
+                                      'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop'
+                                    )
+                                  }
+                                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] rounded-lg font-mono uppercase shrink-0 font-bold"
+                                >
+                                  Reset Default
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Image Preview Window */}
+                          {newPartImage && (
+                            <div className="border border-slate-200 rounded-lg p-2.5 bg-white flex items-center gap-3.5">
+                              <div className="w-14 h-14 rounded-md overflow-hidden bg-slate-100 border border-slate-200/60 shrink-0 relative">
+                                <img
+                                  src={newPartImage}
+                                  alt="Part Preview"
+                                  referrerPolicy="no-referrer"
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    e.currentTarget.src =
+                                      'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop';
+                                  }}
+                                />
+                              </div>
+                              <div className="text-left py-0.5 space-y-0.5 flex-1 min-w-0">
+                                <p className="text-[10px] font-bold text-slate-900 font-mono uppercase tracking-tight">
+                                  Current Selector Preview
+                                </p>
+                                <p className="text-[8px] text-slate-400 truncate leading-none font-mono">
+                                  {newPartImage}
+                                </p>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="text-[7.5px] px-1 bg-green-100 text-green-700 rounded-sm font-semibold uppercase tracking-wide">
+                                    Ready to commit
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setNewPartImage(
+                                        'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop'
+                                      )
+                                    }
+                                    className="text-[8px] text-red-600 hover:text-red-700 font-bold uppercase tracking-wider font-mono"
+                                  >
+                                    Remove / Clear
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
 
                         {/* Customizable Fitment Keys Area block */}

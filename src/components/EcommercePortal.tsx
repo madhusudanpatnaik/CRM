@@ -563,22 +563,6 @@ export default function EcommercePortal({
             </button>
             <button
               onClick={() => {
-                alert('Every part sold includes our robust standard warranty. Selected engines are eligible for up to 36-Month extended security.');
-              }}
-              className="hover:text-white transition duration-200 cursor-pointer"
-            >
-              Warranty
-            </button>
-            <button
-              onClick={() => {
-                alert('Easy Financing available! We partner with leading institutions to offer quick auto-part financing. Select financing during checkout.');
-              }}
-              className="hover:text-white transition duration-200 cursor-pointer font-semibold text-emerald-400 animate-pulse"
-            >
-              Financing Now Available
-            </button>
-            <button
-              onClick={() => {
                 alert('Sign in to your customer portal. Enter your orders tracking ID or registered phone number.');
               }}
               className="hover:text-white transition duration-200 cursor-pointer"
@@ -672,30 +656,6 @@ export default function EcommercePortal({
               Transmission
             </button>
             <button
-              onClick={() => {
-                alert('Get direct pre-qualification for Parts Loans starting at 0% APR. Connect with our Financing specialists at check out.');
-              }}
-              className="hover:text-orange-600 transition duration-200 cursor-pointer font-semibold text-orange-600"
-            >
-              Finance
-            </button>
-            <button
-              onClick={() => {
-                alert('Read our Blog: "Why grade-A used transmissions outperform rebuilds" and other technical articles.');
-              }}
-              className="hover:text-orange-600 transition duration-200 cursor-pointer"
-            >
-              Blogs
-            </button>
-            <button
-              onClick={() => {
-                alert('We back all products with a bulletproof 36-Month extended part-replacement warranty policy.');
-              }}
-              className="hover:text-orange-600 transition duration-200 cursor-pointer"
-            >
-              Warranty
-            </button>
-            <button
               onClick={() => setIsChatOpen(true)}
               className="hover:text-orange-600 transition duration-200 cursor-pointer"
             >
@@ -706,7 +666,7 @@ export default function EcommercePortal({
               onClick={onGoToCrm}
               className="px-2 py-1 bg-slate-950 hover:bg-slate-800 text-white rounded text-[10px] font-bold uppercase transition duration-200 flex items-center gap-1 cursor-pointer"
             >
-              CRM Login
+              Login
             </button>
           </nav>
 
@@ -1030,7 +990,7 @@ export default function EcommercePortal({
                   <motion.div
                     key={part.id}
                     layout
-                    className="bg-white rounded-xl border border-slate-200 overflow-hidden hover:shadow-md transition-all duration-300 flex flex-col justify-between group"
+                    className="bg-white rounded-xl border border-slate-200 overflow-hidden hover:shadow-xl hover:-translate-y-1.5 hover:border-slate-300/80 transition-all duration-300 flex flex-col justify-between group"
                   >
                     <div className="relative aspect-video bg-slate-100 overflow-hidden">
                       <img
@@ -1123,6 +1083,9 @@ export default function EcommercePortal({
           )}
         </div>
       </section>
+
+      {/* Frequently Asked Questions */}
+      <UsedFaqAccordion />
 
 
       {/* Cart Drawer */}
