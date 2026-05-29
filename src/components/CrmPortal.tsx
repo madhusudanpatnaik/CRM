@@ -32,6 +32,8 @@ import {
   Trash2,
   ChevronLeft,
   Download,
+  Bell,
+  Clock,
 } from 'lucide-react';
 import {
   Part,
@@ -86,6 +88,7 @@ interface CrmPortalProps {
   onAddLeads: (leads: Lead[]) => void;
   onAddPhoneLogs: (logs: PhoneLog[]) => void;
   onChangeViewMode: (mode: 'catalog' | 'crm') => void;
+  onPipeSalvagePurchase: (offerId: string, status: 'Pending' | 'Approved' | 'Declined' | 'Received', newPart?: Part) => void;
 }
 
 export default function CrmPortal({
@@ -108,6 +111,7 @@ export default function CrmPortal({
   onUpdateLeadFinances,
   onAddPayment,
   onAddPurchase,
+  onPipeSalvagePurchase,
   onAddTask,
   onSendMail,
   onAddSupportReply,
@@ -135,8 +139,131 @@ export default function CrmPortal({
   const [leadSearchQuery, setLeadSearchQuery] = useState<string>('');
   const [leadStatusFilter, setLeadStatusFilter] = useState<string>('All');
 
+  // Custom manual transit logs for 3PL shipments
+  const [customOrderLogText, setCustomOrderLogText] = useState<{[key: string]: string}>({});
+
   // Selected Lead Profile Mode (Full Tracking Profile Detailed view)
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+
+  // Real-time Toast Notifications state and tracking refs
+  const [toasts, setToasts] = useState<{ id: string; type: string; title: string; desc: string; time: string }[]>([]);
+  const prevLeadsLen = React.useRef(-1);
+  const prevOrdersLen = React.useRef(-1);
+  const prevTicketsLen = React.useRef(-1);
+  const prevPurchasesLen = React.useRef(-1);
+
+  React.useEffect(() => {
+    // Sync current values on initial mount to prevent alert storms
+    if (prevLeadsLen.current === -1) {
+      prevLeadsLen.current = leads ? leads.length : 0;
+      prevOrdersLen.current = orders ? orders.length : 0;
+      prevTicketsLen.current = tickets ? tickets.length : 0;
+      prevPurchasesLen.current = purchases ? purchases.length : 0;
+      return;
+    }
+
+    const currentLeads = leads ? leads.length : 0;
+    if (leads && currentLeads > prevLeadsLen.current) {
+      const diffCount = currentLeads - prevLeadsLen.current;
+      for (let i = 0; i < diffCount; i++) {
+        const item = leads[i];
+        if (item) {
+          setToasts((prev) => [
+            {
+              id: `lead-toast-${item.id}-${Date.now()}-${i}`,
+              type: 'Pipeline Lead',
+              title: 'NEW CRM LEAD INCOMING',
+              desc: `${item.name} placed inquiry: "${item.partRequested}" for vehicle config ${item.vehicle?.year} ${item.vehicle?.make}.`,
+              time: new Date().toLocaleTimeString(),
+            },
+            ...prev,
+          ]);
+        }
+      }
+      prevLeadsLen.current = currentLeads;
+    } else if (leads && currentLeads < prevLeadsLen.current) {
+      prevLeadsLen.current = currentLeads;
+    }
+
+    const currentOrders = orders ? orders.length : 0;
+    if (orders && currentOrders > prevOrdersLen.current) {
+      const diffCount = currentOrders - prevOrdersLen.current;
+      for (let i = 0; i < diffCount; i++) {
+        const item = orders[i];
+        if (item) {
+          setToasts((prev) => [
+            {
+              id: `order-toast-${item.id}-${Date.now()}-${i}`,
+              type: 'Store Checkout',
+              title: 'LIVE E-COMMERCE CHECKOUT',
+              desc: `${item.customerName} submitted credit gateway purchase for "${item.partName}" ($${item.totalAmount.toLocaleString()}).`,
+              time: new Date().toLocaleTimeString(),
+            },
+            ...prev,
+          ]);
+        }
+      }
+      prevOrdersLen.current = currentOrders;
+    } else if (orders && currentOrders < prevOrdersLen.current) {
+      prevOrdersLen.current = currentOrders;
+    }
+
+    const currentTickets = tickets ? tickets.length : 0;
+    if (tickets && currentTickets > prevTicketsLen.current) {
+      const diffCount = currentTickets - prevTicketsLen.current;
+      for (let i = 0; i < diffCount; i++) {
+        const item = tickets[i];
+        if (item) {
+          setToasts((prev) => [
+            {
+              id: `ticket-toast-${item.id}-${Date.now()}-${i}`,
+              type: 'Support Desk',
+              title: 'LIVE CUSTOMER TICKET',
+              desc: `New support helpline ticket Opened: "${item.subject}" by ${item.customerName} [Status: ${item.status}].`,
+              time: new Date().toLocaleTimeString(),
+            },
+            ...prev,
+          ]);
+        }
+      }
+      prevTicketsLen.current = currentTickets;
+    } else if (tickets && currentTickets < prevTicketsLen.current) {
+      prevTicketsLen.current = currentTickets;
+    }
+
+    const currentPurchases = purchases ? purchases.length : 0;
+    if (purchases && currentPurchases > prevPurchasesLen.current) {
+      const diffCount = currentPurchases - prevPurchasesLen.current;
+      for (let i = 0; i < diffCount; i++) {
+        const item = purchases[i];
+        if (item) {
+          setToasts((prev) => [
+            {
+              id: `purchase-toast-${item.id}-${Date.now()}-${i}`,
+              type: 'Supply Bid',
+              title: 'INBOUND SALVAGE BROKER BID',
+              desc: `${item.supplierName} launched scrapyard bidding specs for: "${item.partDetails}" ($${item.priceRequested}).`,
+              time: new Date().toLocaleTimeString(),
+            },
+            ...prev,
+          ]);
+        }
+      }
+      prevPurchasesLen.current = currentPurchases;
+    } else if (purchases && currentPurchases < prevPurchasesLen.current) {
+      prevPurchasesLen.current = currentPurchases;
+    }
+  }, [leads, orders, tickets, purchases]);
+
+  React.useEffect(() => {
+    if (toasts.length > 0) {
+      const lastToast = toasts[toasts.length - 1];
+      const timer = setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== lastToast.id));
+      }, 7000);
+      return () => clearTimeout(timer);
+    }
+  }, [toasts]);
 
   // New Note composition
   const [newNoteAuthor, setNewNoteAuthor] = useState<string>('Joe Miller');
@@ -198,8 +325,46 @@ export default function CrmPortal({
   // Inventory search Query helper
   const [inventorySearch, setInventorySearch] = useState('');
 
+  // Payments CRM Log & Receipt states
+  const [payCustomerType, setPayCustomerType] = useState<'select' | 'manual'>('select');
+  const [paySelectedLeadId, setPaySelectedLeadId] = useState<string>('');
+  const [payManualName, setPayManualName] = useState<string>('');
+  const [payAmount, setPayAmount] = useState<string>('');
+  const [paySource, setPaySource] = useState<'Card' | 'Loan/Financing' | 'PayPal' | 'Bank Wire'>('Card');
+  const [payStatus, setPayStatus] = useState<'Success' | 'Pending' | 'Failed'>('Success');
+  const [payReference, setPayReference] = useState<string>('');
+  const [payReceiptBase64, setPayReceiptBase64] = useState<string>('');
+  const [payReceiptFilename, setPayReceiptFilename] = useState<string>('');
+  const [paySuccessAlert, setPaySuccessAlert] = useState<string>('');
+  const [paySelectedReceiptToView, setPaySelectedReceiptToView] = useState<PaymentTransaction | null>(null);
+
   // Moderate review state reply helper
   const [reviewReplyText, setReviewReplyText] = useState<{ [key: string]: string }>({});
+
+  // Supply-Chain Bidding & Warehouse piping states
+  const [salvageSelectedOffer, setSalvageSelectedOffer] = useState<PurchaseOffer | null>(null);
+  const [isAddingSalvageOffer, setIsAddingSalvageOffer] = useState<boolean>(false);
+  const [newSalvageSupplier, setNewSalvageSupplier] = useState('');
+  const [newSalvageComponent, setNewSalvageComponent] = useState('');
+  const [newSalvagePrice, setNewSalvagePrice] = useState('');
+  const [newSalvageStatus, setNewSalvageStatus] = useState<'Pending' | 'Approved' | 'Declined'>('Pending');
+
+  // Interactive piping / row allocation wizard state
+  const [pipingOffer, setPipingOffer] = useState<PurchaseOffer | null>(null);
+  const [pipeSku, setPipeSku] = useState('');
+  const [pipeName, setPipeName] = useState('');
+  const [pipeCategory, setPipeCategory] = useState('Engine');
+  const [pipeCondition, setPipeCondition] = useState<'New' | 'OEM Remanufactured' | 'Used - Grade A' | 'Used - Grade B'>('Used - Grade A');
+  const [pipePrice, setPipePrice] = useState('');
+  const [pipeCost, setPipeCost] = useState('');
+  const [pipeStock, setPipeStock] = useState('1');
+  const [pipeAisle, setPipeAisle] = useState('Aisle 9');
+  const [pipeShelf, setPipeShelf] = useState('Row 4');
+  const [pipeBin, setPipeBin] = useState('Bin C');
+  const [pipeFitmentMake, setPipeFitmentMake] = useState('Honda');
+  const [pipeFitmentModel, setPipeFitmentModel] = useState('Civic Type R');
+  const [pipeFitmentYearStart, setPipeFitmentYearStart] = useState('2017');
+  const [pipeFitmentYearEnd, setPipeFitmentYearEnd] = useState('2021');
 
   // Lead upload & manual options states
   const [isAddingLeadManual, setIsAddingLeadManual] = useState<boolean>(false);
@@ -818,6 +983,127 @@ export default function CrmPortal({
     setReviewReplyText(prev => ({ ...prev, [id]: '' }));
   };
 
+  // Payments CRM Log & Receipt Submit Handler
+  const handleLogPaymentSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const numericAmount = parseFloat(payAmount);
+    if (isNaN(numericAmount) || numericAmount <= 0) {
+      alert("Please enter a valid payment amount (> 0).");
+      return;
+    }
+
+    let customerName = '';
+    let leadId: string | undefined = undefined;
+
+    if (payCustomerType === 'select') {
+      const selectedLead = leads.find(l => l.id === paySelectedLeadId);
+      if (selectedLead) {
+        customerName = selectedLead.name;
+        leadId = selectedLead.id;
+      } else {
+        alert("Please select a valid customer.");
+        return;
+      }
+    } else {
+      customerName = payManualName.trim();
+      if (!customerName) {
+        alert("Please enter a custom customer name.");
+        return;
+      }
+    }
+
+    const transactionId = `TX-${Math.floor(1000 + Math.random() * 9000)}`;
+    const newTx: PaymentTransaction = {
+      id: transactionId,
+      leadId,
+      customerName,
+      amount: numericAmount,
+      status: payStatus,
+      source: paySource,
+      date: new Date().toISOString(),
+      reference: payReference.trim() || `CRM Admin Manual Auth ${transactionId}`,
+      receiptUrl: payReceiptBase64 || undefined
+    };
+
+    onAddPayment(newTx);
+
+    // If there is associated lead, append a system note log to keep integrity
+    if (leadId) {
+      onAddLeadNote(
+        leadId,
+        `[PAYMENT REGISTERED IN LEDGER] Logged manual CRM transaction (${newTx.source}) for $${numericAmount.toLocaleString()}. Status: ${newTx.status}. Ref: ${newTx.reference}`,
+        'System'
+      );
+    }
+
+    // Reset Form fields
+    setPayAmount('');
+    setPayManualName('');
+    setPayReference('');
+    setPayReceiptBase64('');
+    setPayReceiptFilename('');
+    setPaySuccessAlert(`Successfully published Transaction ${transactionId} to the live ledger databases.`);
+
+    setTimeout(() => {
+      setPaySuccessAlert('');
+    }, 4500);
+  };
+
+  // Helper to auto-generate a sleek digital receipt voucher
+  const handleGenerateDigitalVoucher = () => {
+    let customerName = 'Walk-in Client';
+    if (payCustomerType === 'select') {
+      const selectedLead = leads.find(l => l.id === paySelectedLeadId);
+      if (selectedLead) customerName = selectedLead.name;
+    } else if (payManualName.trim()) {
+      customerName = payManualName.trim();
+    }
+
+    const txAmt = parseFloat(payAmount) || 850;
+    const refText = payReference.trim() || `GEN-${Math.floor(100000 + Math.random() * 900000)}`;
+
+    const svgContent = `
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 600" width="400" height="600" style="background-color:#1e293b; font-family: monospace;">
+        <rect x="20" y="20" width="360" height="560" rx="15" fill="#0f172a" stroke="#f97316" stroke-width="2"/>
+        <circle cx="200" cy="80" r="30" fill="#f97316" fill-opacity="0.1"/>
+        <path d="M190 70 L210 70 L210 90 L190 90 Z" fill="none" stroke="#f97316" stroke-width="3"/>
+        <text x="200" y="140" fill="#f97316" font-size="20" font-weight="bold" text-anchor="middle">TURBOPARTS RECEIPT</text>
+        <text x="200" y="160" fill="#64748b" font-size="10" text-anchor="middle">OFFICIAL TRANSACTION RECORD</text>
+        
+        <line x1="40" y1="190" x2="360" y2="190" stroke="#334155" stroke-dasharray="5,5"/>
+        
+        <text x="40" y="220" fill="#94a3b8" font-size="11">TRANSACTION ID:</text>
+        <text x="360" y="220" fill="#f8fafc" font-size="11" text-anchor="end">TX-M-${Math.floor(1000 + Math.random() * 9000)}</text>
+        
+        <text x="40" y="250" fill="#94a3b8" font-size="11">CUSTOMER:</text>
+        <text x="360" y="250" fill="#f8fafc" font-size="11" font-weight="bold" text-anchor="end">${customerName}</text>
+        
+        <text x="40" y="280" fill="#94a3b8" font-size="11">GATEWAY SOURCE:</text>
+        <text x="360" y="280" fill="#f8fafc" font-size="11" text-anchor="end">${paySource}</text>
+        
+        <text x="40" y="310" fill="#94a3b8" font-size="11">AUTHORIZATION REF:</text>
+        <text x="360" y="310" fill="#f8fafc" font-size="11" text-anchor="end">${refText}</text>
+        
+        <text x="40" y="340" fill="#94a3b8" font-size="11">TIMESTAMP:</text>
+        <text x="360" y="340" fill="#f8fafc" font-size="11" text-anchor="end">${new Date().toLocaleString()}</text>
+        
+        <line x1="40" y1="370" x2="360" y2="370" stroke="#334155" stroke-dasharray="5,5"/>
+        
+        <text x="200" y="415" fill="#f97316" font-size="14" text-anchor="middle">TOTAL SECURED AMOUNT</text>
+        <text x="200" y="455" fill="#ffffff" font-size="28" font-weight="bold" text-anchor="middle">$${txAmt.toLocaleString(undefined, {minimumFractionDigits: 2})}</text>
+        
+        <rect x="80" y="490" width="240" height="35" rx="5" fill="#15803d" fill-opacity="0.1" stroke="#16a34a" stroke-width="1"/>
+        <text x="200" y="512" fill="#4ade80" font-size="11" font-weight="bold" text-anchor="middle">✓ AUTHORIZED PAYMENTS cleared</text>
+        
+        <text x="200" y="555" fill="#475569" font-size="9" text-anchor="middle">Turbo Auto Parts LLC. Core Logistics Desk</text>
+      </svg>
+    `.trim();
+
+    const base64Content = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgContent)))}`;
+    setPayReceiptBase64(base64Content);
+    setPayReceiptFilename('auto_generated_invoice_vouch.svg');
+  };
+
   // Compose Outbox Email inside CRM Mail module
   const handleSendComposeMail = (e: React.FormEvent) => {
     e.preventDefault();
@@ -838,6 +1124,129 @@ export default function CrmPortal({
     setMailTo('');
     setMailSubject('');
     setMailBody('');
+  };
+
+  // Submit a manual purchase bidding offer from dynamic scrap suppliers
+  const handleAddSalvageOfferSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const bidPrice = parseFloat(newSalvagePrice);
+    if (isNaN(bidPrice) || bidPrice <= 0) {
+      alert("Please specify a valid bidding price.");
+      return;
+    }
+    const salvageId = `PO-${Math.floor(903 + Math.random() * 900)}`;
+    const newOffer: PurchaseOffer = {
+      id: salvageId,
+      supplierName: newSalvageSupplier.trim(),
+      partDetails: newSalvageComponent.trim(),
+      priceRequested: bidPrice,
+      status: newSalvageStatus,
+      createdAt: new Date().toISOString()
+    };
+    onAddPurchase(newOffer);
+    
+    // reset form fields
+    setNewSalvageSupplier('');
+    setNewSalvageComponent('');
+    setNewSalvagePrice('');
+    setIsAddingSalvageOffer(false);
+  };
+
+  // Pre-populate and open the interactive warehouser allocation piping wizard
+  const startPipingWizard = (offer: PurchaseOffer) => {
+    setPipingOffer(offer);
+    
+    // Auto-prepopulate based on offer name
+    setPipeCost(offer.priceRequested.toString());
+    setPipePrice(Math.round(offer.priceRequested * 1.45).toString());
+    setPipeSku(`SKU-SLV-${offer.id}-${Math.floor(100 + Math.random() * 900)}`);
+    setPipeName(offer.partDetails);
+
+    const detailsLower = offer.partDetails.toLowerCase();
+    
+    if (detailsLower.includes('engine') || detailsLower.includes('motor')) {
+      setPipeCategory('Engine');
+    } else if (detailsLower.includes('transmission') || detailsLower.includes('gear') || detailsLower.includes('cvt')) {
+      setPipeCategory('Transmission');
+    } else if (detailsLower.includes('alternator') || detailsLower.includes('starter') || detailsLower.includes('battery')) {
+      setPipeCategory('Electrical');
+    } else {
+      setPipeCategory('Suspension');
+    }
+
+    if (detailsLower.includes('civic') || detailsLower.includes('honda')) {
+      setPipeFitmentMake('Honda');
+      setPipeFitmentModel('Civic Type R');
+      setPipeFitmentYearStart('2017');
+      setPipeFitmentYearEnd('2021');
+    } else if (detailsLower.includes('subaru') || detailsLower.includes('tr690')) {
+      setPipeFitmentMake('Subaru');
+      setPipeFitmentModel('Impreza/Outback/Forester');
+      setPipeFitmentYearStart('2012');
+      setPipeFitmentYearEnd('2020');
+    } else {
+      setPipeFitmentMake('Ford');
+      setPipeFitmentModel('F-150');
+      setPipeFitmentYearStart('2015');
+      setPipeFitmentYearEnd('2022');
+    }
+  };
+
+  // Multi-module synchronized layout submission to database
+  const handlePipeSalvageToWarehouseSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pipingOffer) return;
+
+    const retailPrice = parseFloat(pipePrice);
+    const itemCost = parseFloat(pipeCost);
+    const qty = parseInt(pipeStock);
+
+    if (isNaN(retailPrice) || retailPrice < 0) {
+      alert("Please enter a valid retail price.");
+      return;
+    }
+    if (isNaN(itemCost) || itemCost < 0) {
+      alert("Please enter a valid expense cost.");
+      return;
+    }
+    if (isNaN(qty) || qty <= 0) {
+      alert("Stock amount must be at least 1.");
+      return;
+    }
+
+    const startYear = parseInt(pipeFitmentYearStart) || 2015;
+    const endYear = parseInt(pipeFitmentYearEnd) || 2022;
+
+    const newAllocatedPart: Part = {
+      id: `p-slv-${Math.floor(1000 + Math.random() * 9000)}`,
+      sku: pipeSku.trim() || `SKU-SLV-${Math.floor(10000 + Math.random() * 90000)}`,
+      name: pipeName.trim() || pipingOffer.partDetails,
+      category: pipeCategory,
+      condition: pipeCondition,
+      price: retailPrice,
+      cost: itemCost,
+      stock: qty,
+      warehouseLocation: `${pipeAisle}, ${pipeShelf}, ${pipeBin}`,
+      fitment: {
+        yearStart: startYear,
+        yearEnd: endYear,
+        make: pipeFitmentMake.trim() || 'Generic',
+        models: [pipeFitmentModel.trim() || 'All Models']
+      },
+      description: `Salvaged gear & components sourced directly from ${pipingOffer.supplierName} (Bidding offer Ref: ${pipingOffer.id}). Securely processed, graded, and mapped to row location.`,
+      image: pipeCategory === 'Engine' 
+        ? 'https://images.unsplash.com/photo-1517524206127-48bbd363f3d7?q=80&w=600&auto=format&fit=crop' 
+        : 'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop',
+      oemNumber: `OEM-SLV-${Math.floor(100000 + Math.random() * 900000)}`,
+      brand: pipingOffer.supplierName,
+      weightLbs: pipeCategory === 'Engine' ? 180 : 85
+    };
+
+    // Commit to databases in real time via our new backend piping action!
+    onPipeSalvagePurchase(pipingOffer.id, 'Approved', newAllocatedPart);
+
+    // Close and reset Wizard
+    setPipingOffer(null);
   };
 
   // Add agent task action
@@ -869,6 +1278,71 @@ export default function CrmPortal({
   const selectedMailObj = useMemo(() => {
     return mails.find(m => m.id === selectedMailId) || null;
   }, [mails, selectedMailId]);
+
+  // Dynamic chronological real-time system events list compiling from live database state
+  const liveSystemEvents = useMemo(() => {
+    const events: { id: string; label: string; msg: string; time: string; timestamp: number }[] = [];
+
+    // Map checkout orders
+    orders.forEach((o) => {
+      const orderTime = o.orderDate ? new Date(o.orderDate) : new Date();
+      // Record 1: Checkout success payment ledger authorization
+      events.push({
+        id: `sys-evt-ord-save-${o.id}`,
+        label: 'ORDER APPROVED',
+        msg: `E-commerce checkout success. ${o.customerName} cleared gateway credit with order ref #${o.id} ($${o.totalAmount.toLocaleString()}).`,
+        time: orderTime.toLocaleTimeString(),
+        timestamp: orderTime.getTime() + 10, // slight offset to keep order before dispatch
+      });
+      // Record 2: Warehouse packaging routing instruction
+      events.push({
+        id: `sys-evt-ord-route-${o.id}`,
+        label: 'COURIER ROUTED',
+        msg: `Courier logistics provider ${o.logistics.provider || 'UPS'} generated active shipping dispatch label under tracking #${o.logistics.trackingNumber || 'PENDING'}.`,
+        time: orderTime.toLocaleTimeString(),
+        timestamp: orderTime.getTime() + 50,
+      });
+    });
+
+    // Map piping incoming leads
+    leads.forEach((l) => {
+      const leadTime = l.createdAt ? new Date(l.createdAt) : new Date();
+      events.push({
+        id: `sys-evt-led-${l.id}`,
+        label: 'LEAD PIPED',
+        msg: `Universal CRM captured prospect: ${l.name} enquired for compatibility specs on component "${l.partRequested}" (${l.vehicle?.year || 'N/A'} ${l.vehicle?.make || 'N/A'}).`,
+        time: leadTime.toLocaleTimeString(),
+        timestamp: leadTime.getTime(),
+      });
+    });
+
+    // Map live customer support tickets
+    tickets.forEach((t) => {
+      const ticketTime = t.createdAt ? new Date(t.createdAt) : new Date();
+      events.push({
+        id: `sys-evt-tkt-${t.id}`,
+        label: 'CASE INITIATED',
+        msg: `Help desk client portal received support ticket #${t.id}: "${t.subject}" for client customer ${t.customerName}. Status: ${t.status}.`,
+        time: ticketTime.toLocaleTimeString(),
+        timestamp: ticketTime.getTime(),
+      });
+    });
+
+    // Map supply chain biddings
+    purchases.forEach((p) => {
+      const purchaseTime = p.createdAt ? new Date(p.createdAt) : new Date();
+      events.push({
+        id: `sys-evt-pur-${p.id}`,
+        label: 'SUPPLIER OFFER',
+        msg: `Broker procurement stream received yard salvage bidding proposal from ${p.supplierName} for component "${p.partDetails}" (Proposed price: $${p.priceRequested.toLocaleString()}).`,
+        time: purchaseTime.toLocaleTimeString(),
+        timestamp: purchaseTime.getTime(),
+      });
+    });
+
+    // Sort descending by actual system absolute time, slice the top 8
+    return events.sort((a, b) => b.timestamp - a.timestamp).slice(0, 8);
+  }, [orders, leads, tickets, purchases]);
 
   return (
     <div id="crm-layout" className="min-h-screen bg-[#f8fafc] flex flex-col md:flex-row font-sans text-slate-800">
@@ -1305,24 +1779,31 @@ export default function CrmPortal({
                     <ShieldCheck className="w-5 h-5 text-green-400" />
                     <div>
                       <h4 className="text-xs font-bold text-orange-400 font-mono uppercase tracking-wider">SECURE AUDIT FEED</h4>
-                      <h3 className="text-xs text-slate-300">Live background system events and pipeline notifications</h3>
+                      <h3 className="text-xs text-slate-300">Live operational events stream direct from active database</h3>
                     </div>
                   </div>
-                  <span className="px-2 py-0.5 bg-slate-800 rounded text-[9px] font-mono text-slate-400">REST API 3PL Active</span>
+                  <span className="px-2 py-0.5 bg-slate-800 rounded text-[9px] font-mono text-slate-400 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" /> Live Feed Synced
+                  </span>
                 </div>
-                <div className="space-y-2 text-[11px] font-mono text-slate-300">
-                  <p className="flex justify-between border-b border-slate-800/50 pb-1.5">
-                    <span>⚡ COURIER ASSIGNMENT: {orders[0]?.logistics.provider || 'UPS Ground'} dispatched label #{orders[0]?.logistics.trackingNumber || 'N/A'}</span>
-                    <span className="text-slate-500 font-light">12 secs ago</span>
-                  </p>
-                  <p className="flex justify-between border-b border-slate-800/50 pb-1.5">
-                    <span>✓ ORDER SAVED: Marcus Vance credit ledger approved at checkout gateway (Amount: $7,999)</span>
-                    <span className="text-slate-500 font-light">2 mins ago</span>
-                  </p>
-                  <p className="flex justify-between">
-                    <span>⚠ SCAM SIGNAL: Multi-billing zip entry blocked on high-output 180A alternators. System flagged operator Sarah.</span>
-                    <span className="text-slate-500 font-light">30 mins ago</span>
-                  </p>
+                <div className="space-y-2 text-[11px] font-mono text-slate-300 max-h-72 overflow-y-auto pr-1">
+                  {liveSystemEvents.length === 0 ? (
+                    <p className="text-slate-500 italic py-2">No system events compiled yet. Process an e-commerce order, ticket, or lead query to launch telemetry.</p>
+                  ) : (
+                    liveSystemEvents.map((evt) => (
+                      <div key={evt.id} className="flex flex-col sm:flex-row sm:items-start justify-between gap-1 border-b border-slate-800/50 pb-2 mb-2 last:border-0 last:pb-0 last:mb-0">
+                        <div className="flex items-start gap-1.5">
+                          <span className="px-1.5 py-0.5 bg-slate-800 text-[8px] font-black text-orange-400 rounded shrink-0 uppercase tracking-wider border border-slate-700">
+                            {evt.label}
+                          </span>
+                          <span className="text-slate-300 font-medium leading-relaxed">{evt.msg}</span>
+                        </div>
+                        <span className="text-slate-500 font-semibold shrink-0 flex items-center gap-1 mt-0.5 sm:mt-0">
+                          <Clock className="w-3 h-3 text-slate-600" /> {evt.time}
+                        </span>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
@@ -2450,44 +2931,363 @@ export default function CrmPortal({
 
           {/* ======================= TAB: TRANSACTION LEDGER PAYMENT ======================= */}
           {activeMenu === 'Payments' && (
-            <div id="module-payments" className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-4">
-              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b pb-1">Real-time Transaction Ledger</h3>
+            <div id="module-payments" className="space-y-6">
+              {paySuccessAlert && (
+                <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs px-4 py-3 rounded-lg flex items-center justify-between font-medium">
+                  <div className="flex items-center gap-2">
+                    <span className="text-emerald-500 font-bold text-base">✓</span>
+                    <span>{paySuccessAlert}</span>
+                  </div>
+                  <button onClick={() => setPaySuccessAlert('')} className="text-emerald-600 hover:text-emerald-800">Dismiss</button>
+                </div>
+              )}
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-slate-500 border-collapse">
-                  <thead className="bg-slate-50 text-slate-700 font-mono uppercase text-[9px]">
-                    <tr>
-                      <th className="p-3 border-b">Receipt Code</th>
-                      <th className="p-3 border-b">Customer Account</th>
-                      <th className="p-3 border-b">Charge Amount</th>
-                      <th className="p-3 border-b">Payment Source</th>
-                      <th className="p-3 border-b">Transaction status</th>
-                      <th className="p-3 border-b">Date Logs</th>
-                      <th className="p-3 border-b">Authorization Ref</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {payments.map((item) => (
-                      <tr key={item.id} className="hover:bg-slate-50 border-b border-slate-100 transition">
-                        <td className="p-3 font-mono font-extrabold text-slate-900">{item.id}</td>
-                        <td className="p-3 font-semibold text-slate-900">{item.customerName}</td>
-                        <td className="p-3 text-slate-950 font-black">${item.amount.toLocaleString()}</td>
-                        <td className="p-3">{item.source}</td>
-                        <td className="p-3">
-                          <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold ${
-                            item.status === 'Success' ? 'bg-emerald-50 text-emerald-700' :
-                            item.status === 'Pending' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'
-                          }`}>
-                            {item.status}
-                          </span>
-                        </td>
-                        <td className="p-3 font-mono text-[10px] text-slate-400">{new Date(item.date).toLocaleString()}</td>
-                        <td className="p-3 text-[10px] text-slate-400 font-mono">{item.reference}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                
+                {/* COLUMN 1: Log Payment & Receipt Attachment Uploader */}
+                <div className="lg:col-span-1 bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
+                  <div className="border-b pb-2">
+                    <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
+                      <CreditCard className="w-4 h-4 text-orange-600" />
+                      Log manual payment
+                    </h3>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Transmit manual wire or credit authorization records directly into database.</p>
+                  </div>
+
+                  <form onSubmit={handleLogPaymentSubmit} className="space-y-4">
+                    
+                    {/* Customer Selection Type */}
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                        Customer Type
+                      </label>
+                      <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-lg">
+                        <button
+                          type="button"
+                          onClick={() => setPayCustomerType('select')}
+                          className={`py-1 text-[10px] font-mono rounded-md font-bold transition-all ${
+                            payCustomerType === 'select'
+                              ? 'bg-white text-slate-900 shadow-sm'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          CRM Lead Dropdown
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPayCustomerType('manual')}
+                          className={`py-1 text-[10px] font-mono rounded-md font-bold transition-all ${
+                            payCustomerType === 'manual'
+                              ? 'bg-white text-slate-900 shadow-sm'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          Enter Custom Name
+                        </button>
+                      </div>
+                    </div>
+
+                    {payCustomerType === 'select' ? (
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                          Select Customer Lead
+                        </label>
+                        <select
+                          value={paySelectedLeadId}
+                          onChange={(e) => setPaySelectedLeadId(e.target.value)}
+                          required
+                          className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-orange-500 transition font-mono"
+                        >
+                          <option value="">-- Choose Existing CRM Lead --</option>
+                          {leads && leads.map(l => (
+                            <option key={l.id} value={l.id}>
+                              {l.name} ({l.email}) - {l.partRequested}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                          Customer Name
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={payManualName}
+                          onChange={(e) => setPayManualName(e.target.value)}
+                          placeholder="e.g. Samuel Jackson"
+                          className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-orange-500 transition font-mono"
+                        />
+                      </div>
+                    )}
+
+                    {/* Amount & Method */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                          Amount ($)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          required
+                          value={payAmount}
+                          onChange={(e) => setPayAmount(e.target.value)}
+                          placeholder="e.g. 1250.00"
+                          className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-orange-500 transition font-mono"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                          Payment Method
+                        </label>
+                        <select
+                          value={paySource}
+                          onChange={(e) => setPaySource(e.target.value as any)}
+                          className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-900 focus:outline-none tracking-tight font-mono"
+                        >
+                          <option value="Card">Visa / Master Card</option>
+                          <option value="Loan/Financing">Loan / Finance Split</option>
+                          <option value="PayPal">PayPal Checkouts</option>
+                          <option value="Bank Wire">Direct Bank Wire</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Status & Reference */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                          Transaction Status
+                        </label>
+                        <select
+                          value={payStatus}
+                          onChange={(e) => setPayStatus(e.target.value as any)}
+                          className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-900 focus:outline-none font-mono"
+                        >
+                          <option value="Success">Success (Settled)</option>
+                          <option value="Pending">Pending Auth</option>
+                          <option value="Failed">Failed (Declined)</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                          Authorization Ref
+                        </label>
+                        <input
+                          type="text"
+                          value={payReference}
+                          onChange={(e) => setPayReference(e.target.value)}
+                          placeholder="e.g. AUTH-BANK-99"
+                          className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-orange-500 transition font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Receipt File Loader & Generator Widget */}
+                    <div className="space-y-2 border-t pt-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                          Receipt Document
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleGenerateDigitalVoucher}
+                          className="text-[9px] text-orange-600 hover:text-orange-700 font-extrabold font-mono uppercase bg-orange-50 border border-orange-100 px-2 py-0.5 rounded transition"
+                        >
+                          ⚡ Generate Voucher
+                        </button>
+                      </div>
+
+                      {/* Interactive File Drop Area */}
+                      <div className="border border-dashed border-slate-200 hover:border-orange-500 bg-slate-50 p-4 rounded-xl text-center relative transition">
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              setPayReceiptFilename(file.name);
+                              const reader = new FileReader();
+                              reader.onload = (evt) => {
+                                const base64 = evt.target?.result as string;
+                                setPayReceiptBase64(base64);
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                        <p className="text-xs font-bold text-slate-700">Drag or click to choose receipt invoice file</p>
+                        <p className="text-[9px] text-slate-400 mt-0.5">Supports PNG, JPG, JPEG, or PDF documents</p>
+                      </div>
+
+                      {/* Receipt Filename indicator */}
+                      {payReceiptFilename && (
+                        <div className="flex items-center justify-between bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg border text-xs">
+                          <span className="font-mono text-[10px] text-slate-600 truncate max-w-[150px]">{payReceiptFilename}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPayReceiptFilename('');
+                              setPayReceiptBase64('');
+                            }}
+                            className="text-red-500 hover:text-red-700 font-bold"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Interactive document visual thumbnail */}
+                      {payReceiptBase64 && (
+                        <div className="border rounded-lg p-2 bg-slate-900 flex flex-col items-center">
+                          <span className="text-[9px] font-mono text-slate-400 mb-1">Receipt Attachment Preview</span>
+                          <img
+                            src={payReceiptBase64}
+                            alt="Payment Document Receipt"
+                            className="max-h-24 object-contain border border-slate-700 rounded shadow-md"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-mono text-[10px] uppercase font-bold tracking-widest py-2.5 rounded-lg transition duration-200 cursor-pointer flex items-center justify-center gap-1 shadow-lg shadow-orange-950/20"
+                    >
+                      <span>✓ Commit Transaction To CRM Database</span>
+                    </button>
+                  </form>
+                </div>
+
+                {/* COLUMN 2: Real-time Transaction Ledger View */}
+                <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
+                  <div className="border-b pb-2 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest">Real-time Transaction Ledger</h3>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Showing compiled ledger payments synced with node.js storage cache.</p>
+                    </div>
+                    <span className="text-[10px] font-mono font-bold bg-slate-100 px-2 py-1 rounded text-slate-600">
+                      Total Transactions: {payments?.length || 0}
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-slate-500 border-collapse">
+                      <thead className="bg-slate-50 text-slate-700 font-mono uppercase text-[9px]">
+                        <tr>
+                          <th className="p-3 border-b">Receipt Code</th>
+                          <th className="p-3 border-b">Customer Account</th>
+                          <th className="p-3 border-b">Charge Amount</th>
+                          <th className="p-3 border-b">Payment Source</th>
+                          <th className="p-3 border-b">Transaction status</th>
+                          <th className="p-3 border-b">Date Logs</th>
+                          <th className="p-3 border-b text-center">Receipt Document</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {payments && payments.map((item) => (
+                          <tr key={item.id} className="hover:bg-slate-50 border-b border-slate-100 transition">
+                            <td className="p-3 font-mono font-extrabold text-slate-900">{item.id}</td>
+                            <td className="p-3 font-semibold text-slate-900">{item.customerName}</td>
+                            <td className="p-3 text-slate-950 font-black">${item.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                            <td className="p-3">{item.source}</td>
+                            <td className="p-3">
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold ${
+                                item.status === 'Success' ? 'bg-emerald-50 text-emerald-700' :
+                                item.status === 'Pending' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'
+                              }`}>
+                                {item.status}
+                              </span>
+                            </td>
+                            <td className="p-3 font-mono text-[10px] text-slate-400">{new Date(item.date).toLocaleString()}</td>
+                            <td className="p-3 text-center">
+                              {item.receiptUrl ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setPaySelectedReceiptToView(item)}
+                                  className="px-2 py-1 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded text-[10px] font-mono font-bold uppercase cursor-pointer shadow-sm flex items-center justify-center gap-1 mx-auto"
+                                >
+                                  <span>🧾 Display</span>
+                                </button>
+                              ) : (
+                                <span className="text-[10px] font-mono text-slate-300 italic">No receipt attached</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
               </div>
+
+              {/* OVERLAY DIALOG MODAL FOR VIEWING REGISTERED RECEIPT DOCUMENTS */}
+              {paySelectedReceiptToView && (
+                <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200 animate-out fade-out zoom-out duration-150">
+                    <div className="border-b border-slate-800 px-5 py-4 bg-slate-950 flex items-center justify-between">
+                      <div>
+                        <span className="text-[9px] font-extrabold text-orange-500 uppercase tracking-widest font-mono">Ledger Document</span>
+                        <h4 className="text-sm font-bold text-white font-mono">Receipt: {paySelectedReceiptToView.id}</h4>
+                      </div>
+                      <button
+                        onClick={() => setPaySelectedReceiptToView(null)}
+                        className="text-slate-400 hover:text-white font-mono text-xs hover:bg-slate-800 px-2 py-1 rounded"
+                      >
+                        [CLOSE]
+                      </button>
+                    </div>
+
+                    <div className="p-5 flex flex-col items-center justify-center bg-slate-950/40 space-y-4">
+                      <div className="w-full border border-slate-800 rounded-xl overflow-hidden p-2 bg-slate-950 flex justify-center items-center shadow-inner">
+                        <img
+                          src={paySelectedReceiptToView.receiptUrl}
+                          alt="Official CRM Payment Receipt"
+                          className="max-h-[380px] object-contain rounded-lg"
+                        />
+                      </div>
+                      
+                      <div className="w-full bg-slate-900/40 p-3 rounded-lg border border-[#223049] text-xs font-mono text-slate-400 space-y-1 bg-[#0f172a]">
+                        <div className="flex justify-between">
+                          <span>Verified Customer:</span>
+                          <span className="text-white font-bold">{paySelectedReceiptToView.customerName}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Amount Cleared:</span>
+                          <span className="text-emerald-400 font-extrabold">${paySelectedReceiptToView.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Gateway Source:</span>
+                          <span className="text-slate-200">{paySelectedReceiptToView.source}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Reference Auth:</span>
+                          <span className="text-slate-200">{paySelectedReceiptToView.reference}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Timestamp Logged:</span>
+                          <span className="text-slate-300">{new Date(paySelectedReceiptToView.date).toLocaleString()}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-slate-800 bg-slate-950/80 px-5 py-3.5 flex justify-end">
+                      <button
+                        onClick={() => setPaySelectedReceiptToView(null)}
+                        className="bg-slate-800 hover:bg-slate-700 text-slate-100 font-bold px-4 py-2 font-mono text-xs rounded-lg transition"
+                      >
+                        Dismiss Overlay
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -2541,15 +3341,46 @@ export default function CrmPortal({
                   </div>
 
                   {/* Active 3PL Dispatch chronological tracking logs */}
-                  <div className="bg-slate-50 p-3 rounded-lg text-[11px] font-mono border">
-                    <p className="font-bold text-slate-900 border-b pb-1 mb-2 uppercase text-[10px] tracking-wider text-orange-500">Logistics Routing Sync Records</p>
-                    <div className="space-y-1.5">
-                      {ord.logistics.logs.map((lg, idx) => (
-                        <div key={idx} className="flex justify-between text-slate-600 border-b border-slate-150/50 pb-1">
-                          <span className="font-semibold text-slate-800">● {lg.status} ({lg.location})</span>
-                          <span>{new Date(lg.timestamp).toLocaleString()}</span>
-                        </div>
-                      ))}
+                  <div className="bg-slate-50 p-3 rounded-lg text-[11px] font-mono border space-y-3">
+                    <div>
+                      <p className="font-bold text-slate-900 border-b pb-1 mb-2 uppercase text-[10px] tracking-wider text-orange-500">Logistics Routing Sync Records</p>
+                      <div className="space-y-1.5">
+                        {ord.logistics.logs.map((lg, idx) => (
+                          <div key={idx} className="flex justify-between text-slate-600 border-b border-slate-150/50 pb-1">
+                            <span className="font-semibold text-slate-800">● {lg.status} ({lg.location})</span>
+                            <span>{new Date(lg.timestamp).toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Appending manual transit routing note logs */}
+                    <div className="pt-2 border-t border-slate-200">
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                        Add Custom Delivery Status Note / Transit Hub Event
+                      </label>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          id={`custom-log-input-${ord.id}`}
+                          type="text"
+                          placeholder="e.g. Scanned at Denver sorting facility / Delayed due to winter storm..."
+                          value={customOrderLogText[ord.id] || ''}
+                          onChange={(e) => setCustomOrderLogText(prev => ({ ...prev, [ord.id]: e.target.value }))}
+                          className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-orange-500"
+                        />
+                        <button
+                          id={`submit-log-btn-${ord.id}`}
+                          onClick={() => {
+                            const noteText = customOrderLogText[ord.id]?.trim();
+                            if (!noteText) return;
+                            onUpdateOrderStatus(ord.id, ord.logistics.status, noteText);
+                            setCustomOrderLogText(prev => ({ ...prev, [ord.id]: '' }));
+                          }}
+                          className="bg-slate-900 hover:bg-slate-800 text-white font-mono text-[9px] uppercase font-black tracking-wider px-4 py-1.5 rounded-lg transition shrink-0"
+                        >
+                          Commit Log Update
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3104,7 +3935,13 @@ export default function CrmPortal({
                           (p.oemNumber && p.oemNumber.toLowerCase().includes(query))
                         );
                       }).map((p) => (
-                        <tr key={p.id} className="hover:bg-slate-50 border-b transition">
+                        <motion.tr
+                          key={p.id}
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3, ease: 'easeOut' }}
+                          className="hover:bg-slate-50 border-b transition"
+                        >
                           <td className="p-3"><span className="px-1.5 py-0.5 bg-slate-900 text-white text-[9px] font-bold rounded uppercase">{p.category}</span></td>
                           <td className="p-3">
                             <strong className="text-slate-950 font-bold block">{p.name}</strong>
@@ -3125,7 +3962,7 @@ export default function CrmPortal({
                               {p.stock} units
                             </span>
                           </td>
-                        </tr>
+                        </motion.tr>
                       ))}
                     </tbody>
                   </table>
@@ -3543,45 +4380,452 @@ export default function CrmPortal({
 
           {/* ======================= TAB: SCOOP PURCHASE salvage PLATES ======================= */}
           {activeMenu === 'Purchase' && (
-            <div id="module-purchase" className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-4">
-              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b pb-1">Supply-Chain Parts Purchase</h3>
-
-              <div className="bg-slate-50 p-4 rounded-xl text-xs space-y-2 max-w-sm">
-                <span className="text-[10px] font-black font-mono text-orange-600 uppercase">Interactive buying workflow</span>
-                <p className="text-[11px] text-slate-500 leading-normal">Piping scrap and yard salvage offers securely from broker feeds directly into warehouse row allocations.</p>
+            <div id="module-purchase" className="space-y-6">
+              
+              {/* HEADER EXPLANATORY WIDGET */}
+              <div className="bg-slate-900 border border-slate-800 text-white p-5 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-orange-500 animate-pulse" />
+                    <span className="text-[10px] font-black font-mono text-orange-400 uppercase tracking-widest">REAL-TIME CORE LOGISTICS</span>
+                  </div>
+                  <h3 className="text-base font-extrabold font-mono tracking-tight">Salvage & Scrap Broker Feed Gateway</h3>
+                  <p className="text-[12px] text-slate-400">Piping scrap and yard salvage offers securely from broker feeds directly into warehouse row allocations.</p>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setIsAddingSalvageOffer(!isAddingSalvageOffer)}
+                    className="px-3.5 py-2 bg-[#1b253b] hover:bg-[#253351] text-orange-400 hover:text-orange-300 font-mono text-xs font-bold uppercase rounded-xl border border-orange-500/20 transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Inbound Manual Offer</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="overflow-x-auto text-xs">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-50 text-slate-705 font-mono uppercase text-[9px]">
-                    <tr>
-                      <th className="p-3 border-b">Request ID</th>
-                      <th className="p-3 border-b">Auto Wrecker Yard</th>
-                      <th className="p-3 border-b">Offered Component & Gears</th>
-                      <th className="p-3 border-b">Bidding Price</th>
-                      <th className="p-3 border-b">Buying Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {purchases.map((offer) => (
-                      <tr key={offer.id} className="border-b hover:bg-slate-50 transition">
-                        <td className="p-3 font-mono font-bold text-indigo-600">{offer.id}</td>
-                        <td className="p-3 font-bold text-slate-900">{offer.supplierName}</td>
-                        <td className="p-3">{offer.partDetails}</td>
-                        <td className="p-3 font-black text-slate-950">${offer.priceRequested.toLocaleString()}</td>
-                        <td className="p-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            offer.status === 'Approved' ? 'bg-emerald-50 text-emerald-700' :
-                            offer.status === 'Pending' ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'
-                          }`}>
-                            {offer.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+                {/* COLUMN 1 (OPTIONAL PANEL): Manual Salvage Offer Register */}
+                {isAddingSalvageOffer && (
+                  <div className="lg:col-span-1 bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4 animate-in fade-in slide-in-from-left-4 duration-300">
+                    <div className="border-b pb-2 flex items-center justify-between">
+                      <div>
+                        <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Inject Broker Bid</h4>
+                        <p className="text-[10px] text-slate-400">Manually insert a salvaging component bid from third-party feeds.</p>
+                      </div>
+                      <button
+                        onClick={() => setIsAddingSalvageOffer(false)}
+                        className="text-slate-400 hover:text-slate-600 font-mono text-xs font-bold"
+                      >
+                        [Hide]
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleAddSalvageOfferSubmit} className="space-y-3">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest font-mono">Auto Wrecker Yard</label>
+                        <input
+                          type="text"
+                          required
+                          value={newSalvageSupplier}
+                          onChange={(e) => setNewSalvageSupplier(e.target.value)}
+                          placeholder="e.g. Copart Scrap Broker"
+                          className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-800 focus:outline-none transition font-mono"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest font-mono">Offered Component Details</label>
+                        <input
+                          type="text"
+                          required
+                          value={newSalvageComponent}
+                          onChange={(e) => setNewSalvageComponent(e.target.value)}
+                          placeholder="e.g. 2018 Mustang Coyote 5.0L Block"
+                          className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-800 focus:outline-none transition font-mono"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest font-mono">Price Requested ($)</label>
+                          <input
+                            type="number"
+                            required
+                            value={newSalvagePrice}
+                            onChange={(e) => setNewSalvagePrice(e.target.value)}
+                            placeholder="e.g. 1500"
+                            className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-800 focus:outline-none transition font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest font-mono">Buying Status</label>
+                          <select
+                            value={newSalvageStatus}
+                            onChange={(e) => setNewSalvageStatus(e.target.value as any)}
+                            className="w-full bg-white border border-slate-200 rounded-lg py-1.5 px-2 text-xs text-slate-900 focus:outline-none font-mono"
+                          >
+                            <option value="Pending">Pending Audit</option>
+                            <option value="Approved">Approved</option>
+                            <option value="Declined">Declined</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="w-full mt-2 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-mono text-[10px] uppercase font-bold tracking-widest py-2 rounded-lg transition"
+                      >
+                        ⚡ Inject Into Broker feed
+                      </button>
+                    </form>
+                  </div>
+                )}
+
+                {/* COLUMN 2 & 3: Realtime Ledger Action Hub */}
+                <div className={`${isAddingSalvageOffer ? 'lg:col-span-2' : 'lg:col-span-3'} bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4`}>
+                  <div className="flex items-center justify-between border-b pb-2">
+                    <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest">Active Salvage Ledger</h3>
+                    <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+                      Inbound Pipeline Bids: {purchases.length}
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto text-xs">
+                    <table className="w-full text-left border-collapse">
+                      <thead className="bg-[#f8fafc] text-slate-705 font-mono uppercase text-[9px] tracking-wider text-slate-500">
+                        <tr>
+                          <th className="p-3 border-b text-indigo-600">Request ID</th>
+                          <th className="p-3 border-b">Auto Wrecker Yard</th>
+                          <th className="p-3 border-b">Offered Component & Gears</th>
+                          <th className="p-3 border-b">Bidding Price</th>
+                          <th className="p-3 border-b">Buying Status</th>
+                          <th className="p-3 border-b text-center">Interactive Warehouse Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {purchases.map((offer) => (
+                          <tr key={offer.id} className="hover:bg-slate-50 transition">
+                            <td className="p-3 font-mono font-bold text-indigo-600 text-[11px]">{offer.id}</td>
+                            <td className="p-3 font-semibold text-slate-900">{offer.supplierName}</td>
+                            <td className="p-3 font-medium text-slate-700">{offer.partDetails}</td>
+                            <td className="p-3 font-black text-slate-950">${offer.priceRequested.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                            <td className="p-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                offer.status === 'Approved' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/50' :
+                                offer.status === 'Received' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200/50' :
+                                offer.status === 'Pending' ? 'bg-amber-50 text-amber-700 border border-amber-200/50' :
+                                'bg-rose-50 text-rose-700 border border-rose-200/50'
+                              }`}>
+                                {offer.status}
+                              </span>
+                            </td>
+                            <td className="p-3 text-center">
+                              {offer.status === 'Pending' ? (
+                                <div className="flex items-center justify-center gap-2">
+                                  <button
+                                    onClick={() => startPipingWizard(offer)}
+                                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-mono text-[10px] font-bold uppercase rounded-lg shadow-sm transition-all hover:scale-102 flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Layers className="w-3.5 h-3.5" />
+                                    <span>Pipe & Allocate Row</span>
+                                  </button>
+                                  <button
+                                    onClick={() => onPipeSalvagePurchase(offer.id, 'Declined')}
+                                    className="px-2.5 py-1 bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-600 font-mono text-[10px] font-bold uppercase rounded-lg border transition cursor-pointer"
+                                  >
+                                    Decline
+                                  </button>
+                                </div>
+                              ) : offer.status === 'Approved' ? (
+                                <span className="text-[11px] text-slate-400 font-medium italic select-none flex items-center justify-center gap-1">
+                                  <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                                  <span>Piped to Inventory</span>
+                                </span>
+                              ) : (
+                                <span className="text-[11px] text-slate-350 font-medium select-none italic">
+                                  Completed ({offer.status})
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
               </div>
+
+              {/* INTERACTIVE WAREHOUSE PIPING & COORDINATES ALLOCATOR WIZARD DIALOG */}
+              {pipingOffer && (
+                <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+                  <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in duration-200">
+                    
+                    {/* MODAL HEADER */}
+                    <div className="px-6 py-4 bg-slate-950 border-b border-slate-807 flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                          <span className="text-[10px] font-black font-mono text-emerald-400 uppercase tracking-widest">ROW ALLOCATOR DIALOG ACTIVATED</span>
+                        </div>
+                        <h4 className="text-sm font-bold text-white font-mono uppercase tracking-wide">
+                          Piping Offer {pipingOffer.id} to Warehouse Allocation
+                        </h4>
+                      </div>
+                      <button
+                        onClick={() => setPipingOffer(null)}
+                        className="text-slate-400 hover:text-white font-mono text-xs hover:bg-slate-800 px-3 py-1 rounded-xl transition"
+                      >
+                        [CANCEL]
+                      </button>
+                    </div>
+
+                    <form onSubmit={handlePipeSalvageToWarehouseSubmit} className="p-6 space-y-5 bg-slate-950/30 overflow-y-auto max-h-[75vh]">
+                      
+                      {/* OFFER RECALL INFO */}
+                      <div className="bg-[#0f172a] border border-orange-500/20 p-4 rounded-xl flex items-center justify-between text-xs font-mono">
+                        <div className="space-y-1">
+                          <span className="text-orange-400 text-[9px] uppercase tracking-wider font-extrabold block">ORIGIN SCRAP BROKER FEED</span>
+                          <span className="text-slate-100 font-bold block">{pipingOffer.supplierName}</span>
+                          <span className="text-slate-400 block">{pipingOffer.partDetails}</span>
+                        </div>
+                        <div className="text-right space-y-1">
+                          <span className="text-slate-400 text-[9px] uppercase tracking-wider block">ACCEPTED BID AMOUNT</span>
+                          <span className="text-white text-base font-extrabold block">${pipingOffer.priceRequested.toLocaleString()}</span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        
+                        {/* LEFT COLUMN: CORE PART PROPERTIES */}
+                        <div className="space-y-4">
+                          <div className="border-b border-slate-800 pb-1">
+                            <span className="text-[10px] font-black font-mono text-slate-400 uppercase tracking-wider">Inventory Listing Specifications</span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest font-mono">Assigned SKU</label>
+                              <input
+                                type="text"
+                                required
+                                value={pipeSku}
+                                onChange={(e) => setPipeSku(e.target.value)}
+                                className="w-full bg-slate-805 border border-slate-700 focus:border-emerald-500 rounded-lg py-1.5 px-3 text-xs text-white uppercase focus:outline-none focus:ring-1 focus:ring-emerald-500 transition font-mono bg-slate-950"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest font-mono">Part Classification</label>
+                              <select
+                                value={pipeCategory}
+                                onChange={(e) => setPipeCategory(e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg py-1.5 px-3 text-xs text-white focus:outline-none font-mono"
+                              >
+                                <option value="Engine">Engine Block Assembly</option>
+                                <option value="Transmission">Transmission Box</option>
+                                <option value="Brakes">Braking Kit</option>
+                                <option value="Electrical">Starter & Alternator</option>
+                                <option value="Suspension">Shocks & Struts</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest font-mono">Retail Display Title</label>
+                            <input
+                              type="text"
+                              required
+                              value={pipeName}
+                              onChange={(e) => setPipeName(e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-lg py-1.5 px-3 text-xs text-white focus:outline-none transition font-mono"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest font-mono">Graded Quality Condition</label>
+                              <select
+                                value={pipeCondition}
+                                onChange={(e) => setPipeCondition(e.target.value as any)}
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg py-1.5 px-3 text-xs text-white focus:outline-none font-mono"
+                              >
+                                <option value="Used - Grade A">Used - Grade A (Clean Core)</option>
+                                <option value="Used - Grade B">Used - Grade B (Slight Scuffs)</option>
+                                <option value="OEM Remanufactured">OEM Remanufactured</option>
+                                <option value="New">Brand New Core</option>
+                              </select>
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest font-mono">Inbound Stock Units</label>
+                              <input
+                                type="number"
+                                required
+                                min="1"
+                                value={pipeStock}
+                                onChange={(e) => setPipeStock(e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-lg py-1.5 px-3 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 transition font-mono font-bold"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="bg-[#131d31] p-3 rounded-xl border border-blue-900/40 text-[11px] text-slate-400 leading-normal space-y-1">
+                            <strong className="text-white">ROI & Markup Margin Analyzer:</strong>
+                            <div className="flex justify-between border-b border-blue-950/40 pb-1 text-xs">
+                              <span>Acquisition Price:</span>
+                              <span className="text-white">${parseFloat(pipeCost || '0').toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between text-xs font-mono">
+                              <span>Suggested Markup (+45%):</span>
+                              <span className="text-emerald-400 font-extrabold">${pipePrice}</span>
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              Estimated Profit margin is <span className="text-emerald-400 font-bold">${Math.max(0, parseFloat(pipePrice) - parseFloat(pipeCost)).toLocaleString()}</span> per sale.
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* RIGHT COLUMN: WAREHOUSE ROWS & FITMENTS */}
+                        <div className="space-y-4">
+                          <div className="border-b border-slate-800 pb-1">
+                            <span className="text-[10px] font-black font-mono text-slate-400 uppercase tracking-wider">Slot Allocations & Smart Fitments</span>
+                          </div>
+
+                          {/* Dynamic Row Allocator Controls */}
+                          <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-3 shadow-inner">
+                            <span className="text-[10px] font-bold text-orange-400 uppercase tracking-widest font-mono block">Direct Warehouse Physical Coords</span>
+                            
+                            <div className="grid grid-cols-3 gap-2 text-xs">
+                              <div className="space-y-1">
+                                <label className="text-[8px] font-mono text-slate-400 block tracking-wider font-extrabold">AISLE PLACEMENT</label>
+                                <select
+                                  value={pipeAisle}
+                                  onChange={(e) => setPipeAisle(e.target.value)}
+                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg py-1 px-1.5 text-[11px] text-white focus:outline-none"
+                                >
+                                  {Array.from({length: 15}, (_, i) => `Aisle ${i+1}`).map(ais => (
+                                    <option key={ais} value={ais}>{ais}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[8px] font-mono text-slate-400 block tracking-wider font-extrabold">SHELF ROW ROW</label>
+                                <select
+                                  value={pipeShelf}
+                                  onChange={(e) => setPipeShelf(e.target.value)}
+                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg py-1 px-1.5 text-[11px] text-white focus:outline-none"
+                                >
+                                  {['Row A', 'Row B', 'Row C', 'Row D', 'Row E', 'Row F', 'Row G', 'Row 1', 'Row 2', 'Row 4', 'Row 12'].map(sh => (
+                                    <option key={sh} value={sh}>{sh}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[8px] font-mono text-slate-400 block tracking-wider font-extrabold">CONTAINER BIN</label>
+                                <select
+                                  value={pipeBin}
+                                  onChange={(e) => setPipeBin(e.target.value)}
+                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg py-1 px-1.5 text-[11px] text-white focus:outline-none"
+                                >
+                                  {Array.from({length: 20}, (_, i) => `Bin ${String.fromCharCode(65 + (i%6))}${i+1}`).map(b => (
+                                    <option key={b} value={b}>{b}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            <p className="text-[10px] text-slate-500 font-mono italic">
+                              Resulting slot address: <strong className="text-white font-mono">{pipeAisle}, {pipeShelf}, {pipeBin}</strong>
+                            </p>
+                          </div>
+
+                          {/* Specific Fitments Mapping */}
+                          <div className="space-y-2">
+                            <label className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest font-mono">Compatible vehicle specs</label>
+                            
+                            <div className="grid grid-cols-2 gap-2">
+                              <input
+                                type="text"
+                                placeholder="Year Start"
+                                value={pipeFitmentYearStart}
+                                onChange={(e) => setPipeFitmentYearStart(e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg py-1 px-2.5 text-xs text-white text-center"
+                              />
+                              <input
+                                type="text"
+                                placeholder="Year End"
+                                value={pipeFitmentYearEnd}
+                                onChange={(e) => setPipeFitmentYearEnd(e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg py-1 px-2.5 text-xs text-white text-center"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <input
+                                type="text"
+                                placeholder="Make (e.g. Honda)"
+                                value={pipeFitmentMake}
+                                onChange={(e) => setPipeFitmentMake(e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg py-1 px-2.5 text-xs text-white"
+                              />
+                              <input
+                                type="text"
+                                placeholder="Model (e.g. Civic)"
+                                value={pipeFitmentModel}
+                                onChange={(e) => setPipeFitmentModel(e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg py-1 px-2.5 text-xs text-white"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3 pt-2">
+                            <div className="space-y-1">
+                              <label className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest font-mono">Retail Listing Price ($)</label>
+                              <input
+                                type="number"
+                                required
+                                value={pipePrice}
+                                onChange={(e) => setPipePrice(e.target.value)}
+                                className="w-full bg-slate-950 border border-emerald-500/40 text-emerald-400 focus:border-emerald-500 rounded-lg py-1.5 px-3 text-xs focus:outline-none transition font-mono font-black text-center"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest font-mono">Acquisition Cost ($)</label>
+                              <input
+                                type="number"
+                                required
+                                value={pipeCost}
+                                onChange={(e) => setPipeCost(e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-700 text-slate-350 focus:border-slate-500 rounded-lg py-1.5 px-3 text-xs focus:outline-none transition font-mono text-center"
+                              />
+                            </div>
+                          </div>
+
+                        </div>
+
+                      </div>
+
+                      {/* ACTIONS SUBMIT */}
+                      <button
+                        type="submit"
+                        className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-mono text-[11px] uppercase font-bold tracking-widest py-3.5 rounded-xl transition shadow-lg shadow-emerald-950/40 cursor-pointer text-center"
+                      >
+                        ✓ PIPING COMPONENTS DIRECTLY TO WAREHOUSE SLOT
+                      </button>
+
+                    </form>
+
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 
@@ -3689,6 +4933,39 @@ export default function CrmPortal({
             </div>
           )}
         </div>
+      </div>
+
+      {/* Floating Real-Time Notifications Overlays */}
+      <div className="fixed bottom-6 right-6 z-50 pointer-events-none flex flex-col gap-3 w-full max-w-sm">
+        <AnimatePresence>
+          {toasts.map((toast) => (
+            <motion.div
+              key={toast.id}
+              initial={{ opacity: 0, y: 30, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20, scale: 0.85, transition: { duration: 0.2 } }}
+              className="pointer-events-auto bg-slate-900 border border-slate-800 shadow-2xl p-4 rounded-xl flex items-start gap-3 w-full"
+            >
+              <div className="p-2 bg-slate-850 text-orange-400 rounded-lg shrink-0 border border-slate-800">
+                <Bell className="w-5 h-5 animate-bounce" />
+              </div>
+              <div className="flex-1 space-y-0.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-black font-mono text-orange-500 uppercase tracking-widest">{toast.type}</span>
+                  <span className="text-[8px] font-mono text-slate-500">{toast.time}</span>
+                </div>
+                <h5 className="text-[11px] font-black text-white">{toast.title}</h5>
+                <p className="text-[10px] text-slate-400 leading-normal">{toast.desc}</p>
+              </div>
+              <button
+                onClick={() => setToasts((prev) => prev.filter((t) => t.id !== toast.id))}
+                className="text-slate-400 hover:text-white font-bold ml-1 text-xs cursor-pointer select-none"
+              >
+                ✕
+              </button>
+            </motion.div>
+          ))}
+        </AnimatePresence>
       </div>
     </div>
   );

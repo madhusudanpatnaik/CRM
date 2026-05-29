@@ -76,6 +76,7 @@ export interface PaymentTransaction {
   source: 'Card' | 'Loan/Financing' | 'PayPal' | 'Bank Wire';
   date: string;
   reference: string;
+  receiptUrl?: string;
 }
 
 export interface PhoneLog {
