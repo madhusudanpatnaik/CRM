@@ -142,6 +142,27 @@ export default function CrmPortal({
   // Custom manual transit logs for 3PL shipments
   const [customOrderLogText, setCustomOrderLogText] = useState<{[key: string]: string}>({});
 
+  // --- BULK IMPORT AND BULK INVOICING STATES ---
+  const [partModalTab, setPartModalTab] = useState<'manual' | 'bulk'>('manual');
+  const [inventoryUploadPreview, setInventoryUploadPreview] = useState<Part[] | null>(null);
+  const [inventoryUploadError, setInventoryUploadError] = useState<string | null>(null);
+
+  const [paymentInputMode, setPaymentInputMode] = useState<'manual' | 'import'>('manual');
+  const [payUploadPreview, setPayUploadPreview] = useState<PaymentTransaction[] | null>(null);
+  const [payUploadError, setPayUploadError] = useState<string | null>(null);
+
+  const [selectedPaymentIds, setSelectedPaymentIds] = useState<string[]>([]);
+  const [isBulkInvoicePreviewOpen, setIsBulkInvoicePreviewOpen] = useState<boolean>(false);
+  
+  // Custom billing attributes for consolidated invoice
+  const [bulkInvoiceNo, setBulkInvoiceNo] = useState<string>(`INV-BULK-${Math.floor(1000 + Math.random() * 9000)}`);
+  const [bulkInvoiceCompanyAddress, setBulkInvoiceCompanyAddress] = useState<string>('Dallas Distribution Hub, Suite 100, Dallas, TX 75201');
+  const [bulkInvoiceTaxRate, setBulkInvoiceTaxRate] = useState<number>(8.25);
+  const [bulkInvoiceDiscount, setBulkInvoiceDiscount] = useState<number>(0.0);
+  const [bulkInvoiceDueDate, setBulkInvoiceDueDate] = useState<string>(new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+  const [bulkInvoiceTerms, setBulkInvoiceTerms] = useState<string>('Net 15');
+  const [bulkInvoiceNotes, setBulkInvoiceNotes] = useState<string>('Please send ACH wire transfer referencing invoice ID. Late fee of 1.5% applies accrued monthly.');
+
   // Selected Lead Profile Mode (Full Tracking Profile Detailed view)
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
 
@@ -441,6 +462,175 @@ export default function CrmPortal({
     setNewLeadEngine('');
     setNewLeadStatus('Fresh Lead');
     setIsAddingLeadManual(false);
+  };
+
+  // CSV/JSON Payments Log Upload
+  const handlePaymentCSVUpload = (text: string) => {
+    try {
+      const lines = text.split('\n');
+      const parsed: PaymentTransaction[] = [];
+      const isJson = text.trim().startsWith('[') || text.trim().startsWith('{');
+
+      if (isJson) {
+        const data = JSON.parse(text);
+        const list = Array.isArray(data) ? data : [data];
+        list.forEach((item: any, i: number) => {
+          parsed.push({
+            id: item.id || `TX-UL-${Math.floor(1000 + Math.random() * 9000)}-${i}`,
+            leadId: item.leadId || '',
+            customerName: item.customerName || 'Bulk Customer',
+            amount: parseFloat(item.amount) || 100.0,
+            status: (item.status as 'Success' | 'Pending' | 'Failed') || 'Success',
+            source: (item.source as any) || 'Card',
+            date: item.date || new Date().toISOString(),
+            reference: item.reference || 'BULK-REF-0',
+            receiptUrl: item.receiptUrl || ''
+          });
+        });
+      } else {
+        // CSV format: CustomerName, Amount, Source, Status, Reference, Date
+        for (let i = 1; i < lines.length; i++) {
+          const row = lines[i].trim();
+          if (!row) continue;
+          
+          // Basic split by comma. For names with commas, keep it simple
+          const cols = row.split(',').map(s => s.replace(/^"|"$/g, '').trim());
+          if (cols.length < 2 || !cols[0]) continue; // Must have name & amount
+
+          parsed.push({
+            id: `TX-UL-${Math.floor(1000 + Math.random() * 9000)}-${i}`,
+            customerName: cols[0],
+            amount: parseFloat(cols[1]) || 0.0,
+            source: (cols[2] as any) || 'Card',
+            status: (cols[3] as any) || 'Success',
+            reference: cols[4] || `BULK-REF-${i}`,
+            date: cols[5] ? new Date(cols[5]).toISOString() : new Date().toISOString()
+          });
+        }
+      }
+
+      if (parsed.length === 0) {
+        setPayUploadError('No valid transaction records detected in template.');
+      } else {
+        setPayUploadPreview(parsed);
+        setPayUploadError(null);
+      }
+    } catch (err: any) {
+      setPayUploadError(`Parsing error: ${err.message || err}`);
+    }
+  };
+
+  const handleCommitPaymentUpload = () => {
+    if (!payUploadPreview || payUploadPreview.length === 0) return;
+    payUploadPreview.forEach(tx => {
+      onAddPayment(tx);
+    });
+    setPaySuccessAlert(`Successfully imported ${payUploadPreview.length} payment ledger records into database.`);
+    setPayUploadPreview(null);
+    setPaymentInputMode('manual');
+  };
+
+  // CSV/JSON Parts Catalog Upload
+  const handleInventoryCSVUpload = (text: string) => {
+    try {
+      const lines = text.split('\n');
+      const parsed: Part[] = [];
+      const isJson = text.trim().startsWith('[') || text.trim().startsWith('{');
+
+      if (isJson) {
+        const data = JSON.parse(text);
+        const list = Array.isArray(data) ? data : [data];
+        list.forEach((item: any, i: number) => {
+          parsed.push({
+            id: item.id || `P-UL-${Math.floor(1000 + Math.random() * 9000)}-${i}`,
+            sku: item.sku || `SKU-${Math.floor(10000 + Math.random() * 89999)}`,
+            name: item.name || 'Core Component',
+            category: item.category || 'Engine',
+            condition: item.condition || 'Used - Grade A',
+            price: parseFloat(item.price) || 250.0,
+            cost: parseFloat(item.cost) || 120.0,
+            stock: parseInt(item.stock) || 1,
+            warehouseLocation: item.warehouseLocation || 'Aisle 5, Row B',
+            fitment: {
+              yearStart: parseInt(item.fitment?.yearStart) || 2015,
+              yearEnd: parseInt(item.fitment?.yearEnd) || 2020,
+              make: item.fitment?.make || 'Honda',
+              models: Array.isArray(item.fitment?.models) ? item.fitment.models : [item.fitment?.model || 'Accord'],
+              engines: Array.isArray(item.fitment?.engines) ? item.fitment.engines : [item.fitment?.engine || '2.4L L4']
+            },
+            description: item.description || 'Eco-tested, pre-verified core replacement component with warranty coverage.',
+            image: item.image || 'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop',
+            oemNumber: item.oemNumber || 'OEM-PART-NUM',
+            brand: item.brand || 'Generic',
+            weightLbs: parseFloat(item.weightLbs) || 45
+          });
+        });
+      } else {
+        // Name, Brand, Category, Condition, Price, Cost, Stock, OEMNumber, Sku, WarehouseLocation, Description
+        for (let i = 1; i < lines.length; i++) {
+          const row = lines[i].trim();
+          if (!row) continue;
+          
+          const cols = row.split(',').map(s => s.replace(/^"|"$/g, '').trim());
+          if (cols.length < 1 || !cols[0]) continue;
+
+          parsed.push({
+            id: `P-UL-${Math.floor(1000 + Math.random() * 9000)}-${i}`,
+            sku: cols[8] || `SKU-${Math.floor(10000 + Math.random() * 89999)}`,
+            name: cols[0],
+            brand: cols[1] || 'OEM Spec',
+            category: cols[2] || 'Engine',
+            condition: (cols[3] as any) || 'Used - Grade A',
+            price: parseFloat(cols[4]) || 299.0,
+            cost: parseFloat(cols[5]) || 120.0,
+            stock: parseInt(cols[6]) || 1,
+            oemNumber: cols[7] || 'OEM-NUM-99',
+            warehouseLocation: cols[9] || 'Aisle A, Shelf 2',
+            fitment: {
+              yearStart: 2015,
+              yearEnd: 2020,
+              make: 'Ford',
+              models: ['F-150'],
+              engines: ['3.5L V6']
+            },
+            description: cols[10] || 'Quality verified warehouse component stock item.',
+            image: 'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop',
+            weightLbs: 35
+          });
+        }
+      }
+
+      if (parsed.length === 0) {
+        setInventoryUploadError('No valid parts identified in the uploaded schema.');
+      } else {
+        setInventoryUploadPreview(parsed);
+        setInventoryUploadError(null);
+      }
+    } catch (err: any) {
+      setInventoryUploadError(`Parsing error: ${err.message || err}`);
+    }
+  };
+
+  const handleCommitInventoryUpload = () => {
+    if (!inventoryUploadPreview || inventoryUploadPreview.length === 0) return;
+    inventoryUploadPreview.forEach(part => {
+      onAddPart(part);
+    });
+    
+    // Add success notification
+    setToasts(prev => [
+      {
+        id: `inv-import-${Date.now()}`,
+        type: 'Inventory Catalog',
+        title: 'BULK PARTS IMPORTED',
+        desc: `Successfully synchronized ${inventoryUploadPreview?.length} catalog items into shelf allocation records.`,
+        time: new Date().toLocaleTimeString(),
+      },
+      ...prev,
+    ]);
+
+    setInventoryUploadPreview(null);
+    setIsAddPartModalOpen(false);
   };
 
   // CSV Lead Upload parses text client-side
@@ -2949,237 +3139,405 @@ export default function CrmPortal({
                   <div className="border-b pb-2">
                     <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
                       <CreditCard className="w-4 h-4 text-orange-600" />
-                      Log manual payment
+                      Payment Ledger Intake
                     </h3>
-                    <p className="text-[10px] text-slate-400 mt-0.5">Transmit manual wire or credit authorization records directly into database.</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Log transaction items manually or feed external databases using bulk Excel / CSV templates.</p>
                   </div>
 
-                  <form onSubmit={handleLogPaymentSubmit} className="space-y-4">
-                    
-                    {/* Customer Selection Type */}
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
-                        Customer Type
-                      </label>
-                      <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-lg">
-                        <button
-                          type="button"
-                          onClick={() => setPayCustomerType('select')}
-                          className={`py-1 text-[10px] font-mono rounded-md font-bold transition-all ${
-                            payCustomerType === 'select'
-                              ? 'bg-white text-slate-900 shadow-sm'
-                              : 'text-slate-500 hover:text-slate-800'
-                          }`}
-                        >
-                          CRM Lead Dropdown
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPayCustomerType('manual')}
-                          className={`py-1 text-[10px] font-mono rounded-md font-bold transition-all ${
-                            payCustomerType === 'manual'
-                              ? 'bg-white text-slate-900 shadow-sm'
-                              : 'text-slate-500 hover:text-slate-800'
-                          }`}
-                        >
-                          Enter Custom Name
-                        </button>
-                      </div>
-                    </div>
+                  {/* Toggle Mode: Manual Form vs CSV Uploader */}
+                  <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentInputMode('manual')}
+                      className={`py-1.5 text-[10px] font-mono rounded-md font-bold transition-all ${
+                        paymentInputMode === 'manual'
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      💳 Manual Log
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentInputMode('import')}
+                      className={`py-1.5 text-[10px] font-mono rounded-md font-bold transition-all ${
+                        paymentInputMode === 'import'
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      📂 Excel/CSV Import
+                    </button>
+                  </div>
 
-                    {payCustomerType === 'select' ? (
+                  {paymentInputMode === 'manual' ? (
+                    <form onSubmit={handleLogPaymentSubmit} className="space-y-4">
+                      {/* Customer Selection Type */}
                       <div className="space-y-1">
                         <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
-                          Select Customer Lead
+                          Customer Type
                         </label>
-                        <select
-                          value={paySelectedLeadId}
-                          onChange={(e) => setPaySelectedLeadId(e.target.value)}
-                          required
-                          className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-orange-500 transition font-mono"
-                        >
-                          <option value="">-- Choose Existing CRM Lead --</option>
-                          {leads && leads.map(l => (
-                            <option key={l.id} value={l.id}>
-                              {l.name} ({l.email}) - {l.partRequested}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    ) : (
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
-                          Customer Name
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={payManualName}
-                          onChange={(e) => setPayManualName(e.target.value)}
-                          placeholder="e.g. Samuel Jackson"
-                          className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-orange-500 transition font-mono"
-                        />
-                      </div>
-                    )}
-
-                    {/* Amount & Method */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
-                          Amount ($)
-                        </label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          required
-                          value={payAmount}
-                          onChange={(e) => setPayAmount(e.target.value)}
-                          placeholder="e.g. 1250.00"
-                          className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-orange-500 transition font-mono"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
-                          Payment Method
-                        </label>
-                        <select
-                          value={paySource}
-                          onChange={(e) => setPaySource(e.target.value as any)}
-                          className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-900 focus:outline-none tracking-tight font-mono"
-                        >
-                          <option value="Card">Visa / Master Card</option>
-                          <option value="Loan/Financing">Loan / Finance Split</option>
-                          <option value="PayPal">PayPal Checkouts</option>
-                          <option value="Bank Wire">Direct Bank Wire</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    {/* Status & Reference */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
-                          Transaction Status
-                        </label>
-                        <select
-                          value={payStatus}
-                          onChange={(e) => setPayStatus(e.target.value as any)}
-                          className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-900 focus:outline-none font-mono"
-                        >
-                          <option value="Success">Success (Settled)</option>
-                          <option value="Pending">Pending Auth</option>
-                          <option value="Failed">Failed (Declined)</option>
-                        </select>
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
-                          Authorization Ref
-                        </label>
-                        <input
-                          type="text"
-                          value={payReference}
-                          onChange={(e) => setPayReference(e.target.value)}
-                          placeholder="e.g. AUTH-BANK-99"
-                          className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-orange-500 transition font-mono"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Receipt File Loader & Generator Widget */}
-                    <div className="space-y-2 border-t pt-3">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
-                          Receipt Document
-                        </label>
-                        <button
-                          type="button"
-                          onClick={handleGenerateDigitalVoucher}
-                          className="text-[9px] text-orange-600 hover:text-orange-700 font-extrabold font-mono uppercase bg-orange-50 border border-orange-100 px-2 py-0.5 rounded transition"
-                        >
-                          ⚡ Generate Voucher
-                        </button>
-                      </div>
-
-                      {/* Interactive File Drop Area */}
-                      <div className="border border-dashed border-slate-200 hover:border-orange-500 bg-slate-50 p-4 rounded-xl text-center relative transition">
-                        <input
-                          type="file"
-                          accept="image/*,application/pdf"
-                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              setPayReceiptFilename(file.name);
-                              const reader = new FileReader();
-                              reader.onload = (evt) => {
-                                const base64 = evt.target?.result as string;
-                                setPayReceiptBase64(base64);
-                              };
-                              reader.readAsDataURL(file);
-                            }
-                          }}
-                        />
-                        <p className="text-xs font-bold text-slate-700">Drag or click to choose receipt invoice file</p>
-                        <p className="text-[9px] text-slate-400 mt-0.5">Supports PNG, JPG, JPEG, or PDF documents</p>
-                      </div>
-
-                      {/* Receipt Filename indicator */}
-                      {payReceiptFilename && (
-                        <div className="flex items-center justify-between bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg border text-xs">
-                          <span className="font-mono text-[10px] text-slate-600 truncate max-w-[150px]">{payReceiptFilename}</span>
+                        <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-lg">
                           <button
                             type="button"
-                            onClick={() => {
-                              setPayReceiptFilename('');
-                              setPayReceiptBase64('');
-                            }}
-                            className="text-red-500 hover:text-red-700 font-bold"
+                            onClick={() => setPayCustomerType('select')}
+                            className={`py-1 text-[10px] font-mono rounded-md font-bold transition-all ${
+                              payCustomerType === 'select'
+                                ? 'bg-white text-slate-900 shadow-sm'
+                                : 'text-slate-500 hover:text-slate-800'
+                            }`}
                           >
-                            Remove
+                            CRM Lead Dropdown
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPayCustomerType('manual')}
+                            className={`py-1 text-[10px] font-mono rounded-md font-bold transition-all ${
+                              payCustomerType === 'manual'
+                                ? 'bg-white text-slate-900 shadow-sm'
+                                : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                          >
+                            Enter Custom Name
+                          </button>
+                        </div>
+                      </div>
+
+                      {payCustomerType === 'select' ? (
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                            Select Customer Lead
+                          </label>
+                          <select
+                            value={paySelectedLeadId}
+                            onChange={(e) => setPaySelectedLeadId(e.target.value)}
+                            required
+                            className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-orange-500 transition font-mono"
+                          >
+                            <option value="">-- Choose Existing CRM Lead --</option>
+                            {leads && leads.map(l => (
+                              <option key={l.id} value={l.id}>
+                                {l.name} ({l.email}) - {l.partRequested}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                            Customer Name
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={payManualName}
+                            onChange={(e) => setPayManualName(e.target.value)}
+                            placeholder="e.g. Samuel Jackson"
+                            className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-orange-500 transition font-mono"
+                          />
+                        </div>
+                      )}
+
+                      {/* Amount & Method */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                            Amount ($)
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            required
+                            value={payAmount}
+                            onChange={(e) => setPayAmount(e.target.value)}
+                            placeholder="e.g. 1250.00"
+                            className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-orange-500 transition font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                            Payment Method
+                          </label>
+                          <select
+                            value={paySource}
+                            onChange={(e) => setPaySource(e.target.value as any)}
+                            className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-900 focus:outline-none tracking-tight font-mono"
+                          >
+                            <option value="Card">Visa / Master Card</option>
+                            <option value="Loan/Financing">Loan / Finance Split</option>
+                            <option value="PayPal">PayPal Checkouts</option>
+                            <option value="Bank Wire">Direct Bank Wire</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Status & Reference */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                            Transaction Status
+                          </label>
+                          <select
+                            value={payStatus}
+                            onChange={(e) => setPayStatus(e.target.value as any)}
+                            className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-900 focus:outline-none font-mono"
+                          >
+                            <option value="Success">Success (Settled)</option>
+                            <option value="Pending">Pending Auth</option>
+                            <option value="Failed">Failed (Declined)</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                            Authorization Ref
+                          </label>
+                          <input
+                            type="text"
+                            value={payReference}
+                            onChange={(e) => setPayReference(e.target.value)}
+                            placeholder="e.g. AUTH-BANK-99"
+                            className="w-full bg-white border border-slate-200 focus:border-orange-500 rounded-lg py-1.5 px-3 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-orange-500 transition font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Receipt File Loader & Generator Widget */}
+                      <div className="space-y-2 border-t pt-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                            Receipt Document
+                          </label>
+                          <button
+                            type="button"
+                            onClick={handleGenerateDigitalVoucher}
+                            className="text-[9px] text-orange-600 hover:text-orange-700 font-extrabold font-mono uppercase bg-orange-50 border border-orange-100 px-2 py-0.5 rounded transition"
+                          >
+                            ⚡ Generate Voucher
+                          </button>
+                        </div>
+
+                        {/* Interactive File Drop Area */}
+                        <div className="border border-dashed border-slate-200 hover:border-orange-500 bg-slate-50 p-4 rounded-xl text-center relative transition">
+                          <input
+                            type="file"
+                            accept="image/*,application/pdf"
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                setPayReceiptFilename(file.name);
+                                const reader = new FileReader();
+                                reader.onload = (evt) => {
+                                  const base64 = evt.target?.result as string;
+                                  setPayReceiptBase64(base64);
+                                };
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                          />
+                          <p className="text-xs font-bold text-slate-700">Drag or click to choose receipt invoice file</p>
+                          <p className="text-[9px] text-slate-400 mt-0.5">Supports PNG, JPG, JPEG, or PDF documents</p>
+                        </div>
+
+                        {/* Receipt Filename indicator */}
+                        {payReceiptFilename && (
+                          <div className="flex items-center justify-between bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg border text-xs">
+                            <span className="font-mono text-[10px] text-slate-600 truncate max-w-[150px]">{payReceiptFilename}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPayReceiptFilename('');
+                                setPayReceiptBase64('');
+                              }}
+                              className="text-red-500 hover:text-red-700 font-bold"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Interactive document visual thumbnail */}
+                        {payReceiptBase64 && (
+                          <div className="border rounded-lg p-2 bg-slate-900 flex flex-col items-center">
+                            <span className="text-[9px] font-mono text-slate-400 mb-1">Receipt Attachment Preview</span>
+                            <img
+                              src={payReceiptBase64}
+                              alt="Payment Document Receipt"
+                              className="max-h-24 object-contain border border-slate-700 rounded shadow-md"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="w-full bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-mono text-[10px] uppercase font-bold tracking-widest py-2.5 rounded-lg transition duration-200 cursor-pointer flex items-center justify-center gap-1 shadow-lg shadow-orange-950/20"
+                      >
+                        <span>✓ Commit Transaction To CRM Database</span>
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="space-y-4 text-xs font-mono">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block font-mono">
+                          Import Spreadsheet Ledger
+                        </label>
+                        <div className="border-2 border-dashed border-orange-200 bg-orange-50/20 p-6 rounded-xl hover:bg-orange-50/45 relative cursor-pointer text-center group transition">
+                          <input
+                            type="file"
+                            accept=".csv,.json"
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer animate-pulse"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onload = (evt) => {
+                                  const textVal = evt.target?.result as string;
+                                  if (textVal) handlePaymentCSVUpload(textVal);
+                                };
+                                reader.readAsText(file);
+                              }
+                            }}
+                          />
+                          <p className="font-extrabold text-orange-700 font-mono text-xs group-hover:underline">📂 Upload CSV / JSON Ledger</p>
+                          <p className="text-[9px] text-slate-400 mt-1">Accepts standard .csv or serialized ledger records</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block">
+                          Or Paste Tabular Raw Log Lines
+                        </label>
+                        <textarea
+                          rows={4}
+                          placeholder="CustomerName, Amount, Source, Status, Reference, Date&#10;John Hammond, 3450.00, Bank Wire, Success, WIRE-GENES-02, 2026-05-28&#10;Ellie Sattler, 1200.00, Card, Success, AUTO-AUTH-88"
+                          onChange={(e) => handlePaymentCSVUpload(e.target.value)}
+                          className="w-full text-[10px] p-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 font-mono"
+                        />
+                      </div>
+
+                      {payUploadError && (
+                        <div className="bg-red-50 border border-red-200 text-red-700 p-2.5 rounded-lg text-[10px] select-none font-bold">
+                          ⚠️ {payUploadError}
+                        </div>
+                      )}
+
+                      {payUploadPreview && payUploadPreview.length > 0 && (
+                        <div className="space-y-2.5 border-t pt-3">
+                          <div className="flex justify-between items-center text-[10px]">
+                            <span className="font-black text-orange-600 block uppercase">Parsed: {payUploadPreview.length} Payments</span>
+                            <button
+                              type="button"
+                              onClick={() => setPayUploadPreview(null)}
+                              className="text-red-500 hover:text-red-700 font-bold font-mono text-[9px]"
+                            >
+                              [RESET]
+                            </button>
+                          </div>
+
+                          <div className="max-h-44 overflow-y-auto rounded-lg border border-slate-150 divide-y divide-slate-100 bg-slate-50 text-[10px]">
+                            {payUploadPreview.map((item, idx) => (
+                              <div key={idx} className="p-2.5 flex justify-between items-center hover:bg-slate-100/50">
+                                <div>
+                                  <p className="font-bold text-slate-900">{item.customerName}</p>
+                                  <p className="text-[9px] text-slate-400 font-mono">{item.source} • Ref: {item.reference}</p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="font-black text-slate-900">${item.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
+                                  <span className={`px-1 rounded text-[8px] font-bold ${
+                                    item.status === 'Success' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+                                  }`}>{item.status}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={handleCommitPaymentUpload}
+                            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-mono text-[10px] uppercase font-black tracking-widest py-2 rounded-lg transition"
+                          >
+                            ✓ Import {payUploadPreview.length} Ledger Items
                           </button>
                         </div>
                       )}
 
-                      {/* Interactive document visual thumbnail */}
-                      {payReceiptBase64 && (
-                        <div className="border rounded-lg p-2 bg-slate-900 flex flex-col items-center">
-                          <span className="text-[9px] font-mono text-slate-400 mb-1">Receipt Attachment Preview</span>
-                          <img
-                            src={payReceiptBase64}
-                            alt="Payment Document Receipt"
-                            className="max-h-24 object-contain border border-slate-700 rounded shadow-md"
-                          />
-                        </div>
-                      )}
+                      <div className="bg-slate-50 border border-slate-155 p-3 rounded-lg text-[10px] space-y-1.5 text-slate-500">
+                        <p className="font-black text-slate-700 uppercase tracking-widest text-[9px]">Excel / CSV Column Indices:</p>
+                        <p className="font-mono bg-white p-1 rounded border text-[9px] text-orange-600">CustomerName, Amount, Source, Status, Reference, Date</p>
+                        <p>• <strong>Source:</strong> Card / Loan/Financing / PayPal / Bank Wire</p>
+                        <p>• <strong>Status:</strong> Success / Pending / Failed</p>
+                      </div>
                     </div>
-
-                    <button
-                      type="submit"
-                      className="w-full bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-mono text-[10px] uppercase font-bold tracking-widest py-2.5 rounded-lg transition duration-200 cursor-pointer flex items-center justify-center gap-1 shadow-lg shadow-orange-950/20"
-                    >
-                      <span>✓ Commit Transaction To CRM Database</span>
-                    </button>
-                  </form>
+                  )}
                 </div>
 
                 {/* COLUMN 2: Real-time Transaction Ledger View */}
                 <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
-                  <div className="border-b pb-2 flex items-center justify-between">
+                  <div className="border-b pb-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div>
                       <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest">Real-time Transaction Ledger</h3>
                       <p className="text-[10px] text-slate-400 mt-0.5">Showing compiled ledger payments synced with node.js storage cache.</p>
                     </div>
                     <span className="text-[10px] font-mono font-bold bg-slate-100 px-2 py-1 rounded text-slate-600">
-                      Total Transactions: {payments?.length || 0}
+                      Total Ledger Counts: {payments?.length || 0}
                     </span>
                   </div>
+
+                  {/* Multi-row selection helper banner */}
+                  {selectedPaymentIds.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="bg-orange-50 border border-orange-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                    >
+                      <div>
+                        <p className="font-bold text-orange-850 font-mono">
+                          ⚡ BULK ACTION: {selectedPaymentIds.length} Payments Selected
+                        </p>
+                        <p className="text-[10px] text-orange-600 font-mono mt-0.5">
+                          Selected Subtotal: ${payments?.filter(p => selectedPaymentIds.includes(p.id)).reduce((acc, curr) => acc + curr.amount, 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setIsBulkInvoicePreviewOpen(true)}
+                          className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-mono text-[10px] uppercase font-bold tracking-wider rounded-lg shadow transition cursor-pointer"
+                        >
+                          🧾 Assemble Bulk Invoice
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPaymentIds([])}
+                          className="px-3 py-1.5 border border-orange-200 text-orange-700 bg-white hover:bg-orange-100 rounded-lg font-mono text-[10px] tracking-wider transition cursor-pointer"
+                        >
+                          Clear Selection
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
 
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs text-slate-500 border-collapse">
                       <thead className="bg-slate-50 text-slate-700 font-mono uppercase text-[9px]">
                         <tr>
+                          <th className="p-3 border-b w-8">
+                            <input
+                              type="checkbox"
+                              checked={payments && payments.length > 0 && selectedPaymentIds.length === payments.length}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedPaymentIds(payments ? payments.map(p => p.id) : []);
+                                } else {
+                                  setSelectedPaymentIds([]);
+                                }
+                              }}
+                              className="rounded border-slate-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
+                            />
+                          </th>
                           <th className="p-3 border-b">Receipt Code</th>
                           <th className="p-3 border-b">Customer Account</th>
                           <th className="p-3 border-b">Charge Amount</th>
@@ -3191,7 +3549,23 @@ export default function CrmPortal({
                       </thead>
                       <tbody>
                         {payments && payments.map((item) => (
-                          <tr key={item.id} className="hover:bg-slate-50 border-b border-slate-100 transition">
+                          <tr key={item.id} className={`hover:bg-slate-50 border-b border-slate-100 transition ${
+                            selectedPaymentIds.includes(item.id) ? 'bg-orange-50/40 hover:bg-orange-50/60' : ''
+                          }`}>
+                            <td className="p-3">
+                              <input
+                                type="checkbox"
+                                checked={selectedPaymentIds.includes(item.id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedPaymentIds(prev => [...prev, item.id]);
+                                  } else {
+                                    setSelectedPaymentIds(prev => prev.filter(id => id !== item.id));
+                                  }
+                                }}
+                                className="rounded border-slate-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
+                              />
+                            </td>
                             <td className="p-3 font-mono font-extrabold text-slate-900">{item.id}</td>
                             <td className="p-3 font-semibold text-slate-900">{item.customerName}</td>
                             <td className="p-3 text-slate-950 font-black">${item.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
@@ -3286,6 +3660,267 @@ export default function CrmPortal({
                       </button>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* CONSOLIDATED BULK INVOICE PLANNER & DOCUMENT GENERATOR MODAL */}
+              {isBulkInvoicePreviewOpen && (
+                <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="bg-slate-100 border border-slate-300 rounded-2xl w-full max-w-5xl overflow-hidden shadow-2xl flex flex-col lg:flex-row h-auto max-h-[90vh]"
+                  >
+                    
+                    {/* LEFT PANEL: CONFIGURATION PARAMETERS */}
+                    <div className="w-full lg:w-1/3 bg-slate-900 text-slate-300 p-6 border-r border-slate-800 flex flex-col overflow-y-auto space-y-4">
+                      <div className="border-b border-slate-800 pb-3">
+                        <span className="text-[10px] font-black text-orange-500 uppercase tracking-widest font-mono">Operations desk</span>
+                        <h3 className="text-base font-bold text-white font-mono">Invoice Configurator</h3>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Customize corporate metadata, tax classifications, and terms of remittance.</p>
+                      </div>
+
+                      {/* Invoice Suffix / ID */}
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider font-mono">Invoice Number ID</label>
+                        <input
+                          type="text"
+                          value={bulkInvoiceNo}
+                          onChange={(e) => setBulkInvoiceNo(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg text-xs py-1.5 px-3 text-slate-200 focus:outline-none focus:border-orange-500 font-mono"
+                        />
+                      </div>
+
+                      {/* Corporate Sender Info */}
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider font-mono">Billing Remit Address</label>
+                        <textarea
+                          rows={3}
+                          value={bulkInvoiceCompanyAddress}
+                          onChange={(e) => setBulkInvoiceCompanyAddress(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg text-xs py-1.5 px-3 text-slate-200 focus:outline-none focus:border-orange-500 font-mono"
+                        />
+                      </div>
+
+                      {/* Financial Inputs: Tax and Discount */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider font-mono">Sales Tax (%)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={bulkInvoiceTaxRate}
+                            onChange={(e) => setBulkInvoiceTaxRate(parseFloat(e.target.value) || 0)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg text-xs py-1.5 px-3 text-slate-200 focus:outline-none focus:border-orange-500 font-mono"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider font-mono">Discount (%)</label>
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={bulkInvoiceDiscount}
+                            onChange={(e) => setBulkInvoiceDiscount(parseFloat(e.target.value) || 0)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg text-xs py-1.5 px-3 text-slate-200 focus:outline-none focus:border-orange-500 font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Timeline: Issue and Due Date */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider font-mono">Remittance Terms</label>
+                          <select
+                            value={bulkInvoiceTerms}
+                            onChange={(e) => setBulkInvoiceTerms(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg text-xs py-1.5 px-3 text-slate-200 focus:outline-none focus:border-orange-500 font-mono"
+                          >
+                            <option value="Net 15">Net 15 Days</option>
+                            <option value="Net 30">Net 30 Days</option>
+                            <option value="Due on Receipt">Due on Receipt</option>
+                            <option value="Net 60">Net 60 Days</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider font-mono">Deadline Date</label>
+                          <input
+                            type="date"
+                            value={bulkInvoiceDueDate}
+                            onChange={(e) => setBulkInvoiceDueDate(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg text-xs py-1.5 px-3 text-slate-200 focus:outline-none focus:border-orange-500 font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Custom instructions / footer */}
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider font-mono">Terms Constraints</label>
+                        <textarea
+                          rows={3}
+                          value={bulkInvoiceNotes}
+                          onChange={(e) => setBulkInvoiceNotes(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg text-xs py-1.5 px-3 text-slate-200 focus:outline-none focus:border-orange-500 font-mono"
+                        />
+                      </div>
+
+                      {/* Action Triggers */}
+                      <div className="pt-4 border-t border-slate-800 space-y-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Reset state & alerts
+                            setIsBulkInvoicePreviewOpen(false);
+                            setSelectedPaymentIds([]);
+                            // Send custom Toast
+                            setToasts(prev => [
+                              {
+                                id: `inv-pub-${Date.now()}`,
+                                type: 'Corporate Invoice',
+                                title: 'INVOICE COMMITTED',
+                                desc: `Asset Record ${bulkInvoiceNo} exported for digital routing successfully.`,
+                                time: new Date().toLocaleTimeString(),
+                              },
+                              ...prev,
+                            ]);
+                          }}
+                          className="w-full py-2 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-mono text-[11px] uppercase font-bold tracking-wider rounded-lg shadow-lg pointer transition duration-150 cursor-pointer text-center"
+                        >
+                          💾 Save & Finalize Invoice
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            window.print();
+                          }}
+                          className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-100 font-mono text-[11px] uppercase font-bold tracking-wider rounded-lg transition text-center cursor-pointer"
+                        >
+                          🖨️ Print Statement
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* RIGHT PANEL: COMMERCIAL SWISS-STYLE STATEMENT SHEET */}
+                    <div className="w-full lg:w-2/3 bg-white p-8 flex flex-col overflow-y-auto text-slate-900 justify-between">
+                      <div>
+                        {/* INVOICE MAIN LETTERHEAD */}
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between border-b-2 border-slate-900 pb-5 gap-4">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <div className="w-6 h-6 bg-orange-600 rounded flex items-center justify-center text-white font-black text-xs">T</div>
+                              <span className="text-lg font-black tracking-widest text-slate-900 uppercase font-mono">TURBO PARTS</span>
+                            </div>
+                            <p className="text-[10px] text-slate-500 font-mono whitespace-pre-line">{bulkInvoiceCompanyAddress}</p>
+                          </div>
+                          
+                          <div className="text-left sm:text-right space-y-1 sm:space-y-2">
+                            <span className="bg-slate-900 text-white text-[9px] font-black uppercase font-mono px-2.5 py-1 rounded">
+                              Consolidated Statement
+                            </span>
+                            <h2 className="text-xl font-black text-slate-900 font-mono tracking-tight mt-1">Invoice: {bulkInvoiceNo}</h2>
+                            <p className="text-[10px] text-slate-400 font-mono">Date Generated: {new Date().toLocaleDateString()}</p>
+                          </div>
+                        </div>
+
+                        {/* TRANSACTION META INFORMATION */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-5 text-xs font-mono border-b border-dashed">
+                          <div className="space-y-1 text-slate-600">
+                            <p className="font-bold text-slate-900 text-[10px] uppercase tracking-wider">Debit Client Target Accounts:</p>
+                            <div className="pl-2 border-l-2 border-orange-500 py-0.5 space-y-0.5">
+                              {payments
+                                ?.filter(p => selectedPaymentIds.includes(p.id))
+                                .filter((val, index, self) => self.findIndex(t => t.customerName === val.customerName) === index)
+                                .map((p, i) => (
+                                  <p key={i} className="font-extrabold text-slate-900">{p.customerName}</p>
+                                ))}
+                              {selectedPaymentIds.length === 0 && <p className="italic">No client records bound</p>}
+                            </div>
+                          </div>
+                          
+                          <div className="space-y-1 text-slate-600 sm:text-right">
+                            <p className="font-bold text-slate-900 text-[10px] uppercase tracking-wider">Timeline Parameters:</p>
+                            <p>Terms: <span className="font-extrabold text-slate-900">{bulkInvoiceTerms}</span></p>
+                            <p>Payment Schedule: <span className="font-extrabold text-slate-900">{bulkInvoiceTerms}</span></p>
+                            <p>Remittance Due: <span className="font-extrabold text-red-600">{bulkInvoiceDueDate ? new Date(bulkInvoiceDueDate).toLocaleDateString() : 'N/A'}</span></p>
+                          </div>
+                        </div>
+
+                        {/* LINE ITEMS BLOCK */}
+                        <div className="py-5">
+                          <table className="w-full text-left text-xs font-mono">
+                            <thead>
+                              <tr className="bg-slate-100 text-slate-700 uppercase text-[9px] border-b border-slate-300">
+                                <th className="p-2 py-2 text-slate-805">Tx Code</th>
+                                <th className="p-2 py-2 text-slate-805">Purchaser</th>
+                                <th className="p-2 py-2 text-slate-805">Charge Suffix</th>
+                                <th className="p-2 py-2 text-right text-slate-805">Total Debit ($)</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {payments
+                                ?.filter(p => selectedPaymentIds.includes(p.id))
+                                .map((item) => (
+                                  <tr key={item.id} className="border-b hover:bg-slate-50 transition">
+                                    <td className="p-2 py-2.5 font-bold text-slate-900">{item.id}</td>
+                                    <td className="p-2 py-2.5 text-slate-700">{item.customerName}</td>
+                                    <td className="p-2 py-2.5 text-slate-500">{item.source} • Ref: {item.reference.substring(0, 10)}</td>
+                                    <td className="p-2 py-2.5 text-right font-black text-slate-950">
+                                      ${item.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                                    </td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {/* SUMMARY BLOCK IN THICK GLOSSY FINISH */}
+                      <div className="mt-6 border-t-2 border-slate-900 pt-5 text-right font-mono text-xs text-slate-600 space-y-1.5 bg-slate-50/65 p-4 rounded-xl">
+                        <div className="flex justify-between max-w-sm ml-auto">
+                          <span>Subtotal Line Volume:</span>
+                          <span className="font-extrabold text-slate-900">
+                            ${(payments?.filter(p => selectedPaymentIds.includes(p.id)).reduce((acc, curr) => acc + curr.amount, 0) || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
+                          </span>
+                        </div>
+                        {bulkInvoiceDiscount > 0 && (
+                          <div className="flex justify-between max-w-sm ml-auto text-orange-600 font-bold">
+                            <span>Adjusted Discount (-{bulkInvoiceDiscount}%):</span>
+                            <span>
+                              -${(((payments?.filter(p => selectedPaymentIds.includes(p.id)).reduce((acc, curr) => acc + curr.amount, 0) || 0) * bulkInvoiceDiscount) / 100).toLocaleString(undefined, {minimumFractionDigits: 2})}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex justify-between max-w-sm ml-auto">
+                          <span>Sales Surtax ({bulkInvoiceTaxRate}%):</span>
+                          <span>
+                            +${((((payments?.filter(p => selectedPaymentIds.includes(p.id)).reduce((acc, curr) => acc + curr.amount, 0) || 0) - (((payments?.filter(p => selectedPaymentIds.includes(p.id)).reduce((acc, curr) => acc + curr.amount, 0) || 0) * bulkInvoiceDiscount) / 100)) * bulkInvoiceTaxRate) / 100).toLocaleString(undefined, {minimumFractionDigits: 2})}
+                          </span>
+                        </div>
+                        
+                        <div className="flex justify-between max-w-sm ml-auto text-base text-slate-950 font-black border-t-2 border-slate-900/10 pt-2 font-sans tracking-tight">
+                          <span>TOTAL DEBIT SCHEDULER:</span>
+                          <span className="text-slate-950 underline decoration-double">
+                            ${((((payments?.filter(p => selectedPaymentIds.includes(p.id)).reduce((acc, curr) => acc + curr.amount, 0) || 0) - (((payments?.filter(p => selectedPaymentIds.includes(p.id)).reduce((acc, curr) => acc + curr.amount, 0) || 0) * bulkInvoiceDiscount) / 100)) * (1 + bulkInvoiceTaxRate / 100))).toLocaleString(undefined, {minimumFractionDigits: 2})}
+                          </span>
+                        </div>
+
+                        {/* SWISS GLOSSY SIGNATURE DECORATOR */}
+                        <div className="pt-6 flex justify-between items-end border-t border-dashed mt-6 gap-4">
+                          <div className="text-left font-mono text-[9px] text-slate-400 max-w-[280px]">
+                            <p className="font-bold text-slate-650 uppercase tracking-wider text-[8px] mb-1">Commercial Statements Disclaimer:</p>
+                            <p>{bulkInvoiceNotes}</p>
+                          </div>
+
+                          <div className="text-right space-y-1">
+                            <p className="text-[8px] uppercase tracking-wider text-slate-400">Authorized Comptroller</p>
+                            <span className="font-mono text-xs font-black tracking-widest text-[#2e4057] italic select-none">TurboParts Desk</span>
+                            <div className="w-32 h-[1px] bg-slate-300 ml-auto"></div>
+                            <p className="text-[8px] font-mono tracking-widest font-black text-slate-350 select-none">||| || | | ||| | ||| |||</p>
+                          </div>
+                        </div>
+                      </div>
+
+                    </div>
+                  </motion.div>
                 </div>
               )}
             </div>
@@ -3432,406 +4067,397 @@ export default function CrmPortal({
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.95 }}
-                      className="fixed inset-4 max-w-xl mx-auto my-auto h-[80vh] bg-white rounded-xl shadow-2xl z-50 p-6 overflow-y-auto space-y-4"
+                      className={`fixed inset-4 ${partModalTab === 'bulk' ? 'max-w-4xl' : 'max-w-xl'} mx-auto my-auto h-[80vh] bg-white rounded-xl shadow-2xl z-50 p-6 overflow-y-auto flex flex-col space-y-4`}
                     >
                       <div className="flex justify-between items-center border-b pb-2">
-                        <h4 className="font-bold text-slate-900 text-sm">Add New Component SKU Specification</h4>
-                        <button onClick={() => setIsAddPartModalOpen(false)} className="text-slate-500 font-extrabold hover:text-slate-900">Close</button>
+                        <div>
+                          <h4 className="font-bold text-slate-900 text-sm">Add New Component SKU Specification</h4>
+                          <p className="text-[10px] text-slate-400 mt-0.5">Define single custom components or sync multiple spreadsheets to live cache nodes.</p>
+                        </div>
+                        <button onClick={() => setIsAddPartModalOpen(false)} className="text-slate-500 font-extrabold hover:text-slate-900 text-xs font-mono uppercase">
+                          [Close Dialog]
+                        </button>
                       </div>
 
-                      {/* Add parts form */}
-                      <form onSubmit={handleCreatePart} className="space-y-3 text-xs">
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-slate-500 font-semibold block">Component Name</label>
-                            <input
-                              type="text"
-                              required
-                              value={newPartName}
-                              onChange={(e) => setNewPartName(e.target.value)}
-                              placeholder="F150 Alternator Brembo Grade"
-                              className="w-full px-2 py-1.5 border rounded"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-slate-500 font-semibold block">Brand Supplier</label>
-                            <input
-                              type="text"
-                              required
-                              value={newPartBrand}
-                              onChange={(e) => setNewPartBrand(e.target.value)}
-                              placeholder="Ford OEM"
-                              className="w-full px-2 py-1.5 border rounded"
-                            />
-                          </div>
-                        </div>
+                      {/* Modal Mode Selector Tabs */}
+                      <div className="flex border border-slate-200 rounded-lg overflow-hidden shrink-0 bg-slate-50">
+                        <button
+                          type="button"
+                          onClick={() => setPartModalTab('manual')}
+                          className={`flex-1 py-2 text-center font-bold font-mono text-[10px] uppercase transition ${
+                            partModalTab === 'manual'
+                              ? 'bg-slate-900 text-white'
+                              : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                          }`}
+                        >
+                          Manual Specification Specs
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPartModalTab('bulk')}
+                          className={`flex-1 py-2 text-center font-bold font-mono text-[10px] uppercase transition ${
+                            partModalTab === 'bulk'
+                              ? 'bg-slate-900 text-white'
+                              : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                          }`}
+                        >
+                          Spreadsheet CSV Import
+                        </button>
+                      </div>
 
-                        <div className="grid grid-cols-3 gap-3">
-                          <div>
-                            <label className="text-slate-500 font-semibold block">Category</label>
-                            <select
-                              value={newPartCategory}
-                              onChange={(e) => {
-                                const cat = e.target.value;
-                                setNewPartCategory(cat);
-                                if (imageUploadMethod === 'presets') {
-                                  if (cat === 'Engine') {
-                                    setNewPartImage('https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop');
-                                  } else if (cat === 'Transmission') {
-                                    setNewPartImage('https://images.unsplash.com/photo-1517524206127-48bbd363f3d7?q=80&w=600&auto=format&fit=crop');
-                                  } else if (cat === 'Brakes') {
-                                    setNewPartImage('https://images.unsplash.com/photo-1503376780353-7e6692767b70?q=80&w=600&auto=format&fit=crop');
-                                  } else if (cat === 'Electrical') {
-                                    setNewPartImage('https://images.unsplash.com/photo-1619642751034-765dfdf7c58e?q=80&w=600&auto=format&fit=crop');
-                                  } else {
-                                    setNewPartImage('https://images.unsplash.com/photo-1503376780353-7e6692767b70?q=80&w=600&auto=format&fit=crop');
-                                  }
-                                }
-                              }}
-                              className="w-full px-2 py-1.5 border rounded bg-white"
-                            >
-                              <option value="Engine">Engine</option>
-                              <option value="Transmission">Transmission</option>
-                              <option value="Brakes">Brakes</option>
-                              <option value="Suspension">Suspension</option>
-                              <option value="Electrical">Electrical</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="text-slate-500 font-semibold block">Condition Quality</label>
-                            <select
-                              value={newPartCondition}
-                              onChange={(e) => setNewPartCondition(e.target.value as any)}
-                              className="w-full px-2 py-1.5 border rounded bg-white"
-                            >
-                              <option value="New">New</option>
-                              <option value="OEM Remanufactured">OEM Remanufactured</option>
-                              <option value="Used - Grade A">Used - Grade A</option>
-                              <option value="Used - Grade B">Used - Grade B</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="text-slate-500 font-semibold block">OEM Core Serial #</label>
-                            <input
-                              type="text"
-                              required
-                              value={newPartOem}
-                              onChange={(e) => setNewPartOem(e.target.value)}
-                              placeholder="TOY-12-FL"
-                              className="w-full px-2 py-1.5 border rounded"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-4 gap-3">
-                          <div>
-                            <label className="text-slate-500 font-semibold block">Price ($)</label>
-                            <input
-                              type="number"
-                              required
-                              value={newPartPrice}
-                              onChange={(e) => setNewPartPrice(parseFloat(e.target.value) || 0)}
-                              className="w-full px-2 py-1.5 border rounded"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-slate-500 font-semibold block">Sourcing Cost ($)</label>
-                            <input
-                              type="number"
-                              required
-                              value={newPartCost}
-                              onChange={(e) => setNewPartCost(parseFloat(e.target.value) || 0)}
-                              className="w-full px-2 py-1.5 border rounded"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-slate-500 font-semibold block">Stock qty</label>
-                            <input
-                              type="number"
-                              required
-                              value={newPartStock}
-                              onChange={(e) => setNewPartStock(parseInt(e.target.value) || 1)}
-                              className="w-full px-2 py-1.5 border rounded"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-slate-500 font-semibold block">Weight (lbs)</label>
-                            <input
-                              type="number"
-                              required
-                              value={newPartWeight}
-                              onChange={(e) => setNewPartWeight(parseFloat(e.target.value) || 10)}
-                              className="w-full px-2 py-1.5 border rounded"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-slate-500 font-semibold block">Aisle Location Shelf</label>
-                            <input
-                              type="text"
-                              value={newPartLocation}
-                              onChange={(e) => setNewPartLocation(e.target.value)}
-                              placeholder="Row 1, Aisle D, Shelf 4"
-                              className="w-full px-2 py-1.5 border rounded"
-                            />
-                          </div>
-                        </div>
-
-                        {/* ======================= FILE UPLOAD & IMAGE SELECTION MODULE ======================= */}
-                        <div className="bg-slate-50 border border-slate-200 p-3 rounded-lg space-y-3">
-                          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                            <label className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-slate-700">
-                              Product Catalog Media Selection
-                            </label>
-                            <span className="text-[9px] font-medium bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded uppercase font-mono">
-                              Required
-                            </span>
-                          </div>
-
-                          {/* Image Method Switcher Tabs */}
-                          <div className="flex border-b border-slate-200">
-                            <button
-                              type="button"
-                              onClick={() => setImageUploadMethod('presets')}
-                              className={`flex-1 py-1 text-center font-bold font-mono text-[10px] uppercase border-b-2 transition ${
-                                imageUploadMethod === 'presets'
-                                  ? 'border-orange-600 text-orange-600'
-                                  : 'border-transparent text-slate-500 hover:text-slate-800'
-                              }`}
-                            >
-                              Preset Library
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setImageUploadMethod('file')}
-                              className={`flex-1 py-1 text-center font-bold font-mono text-[10px] uppercase border-b-2 transition ${
-                                imageUploadMethod === 'file'
-                                  ? 'border-orange-600 text-orange-600'
-                                  : 'border-transparent text-slate-500 hover:text-slate-800'
-                              }`}
-                            >
-                              Drag & Drop Upload
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setImageUploadMethod('url')}
-                              className={`flex-1 py-1 text-center font-bold font-mono text-[10px] uppercase border-b-2 transition ${
-                                imageUploadMethod === 'url'
-                                  ? 'border-orange-600 text-orange-600'
-                                  : 'border-transparent text-slate-500 hover:text-slate-800'
-                              }`}
-                            >
-                              External Web URL
-                            </button>
-                          </div>
-
-                          {/* Actionable Panels */}
-                          {imageUploadMethod === 'presets' && (
-                            <div className="space-y-2">
-                              <p className="text-[10px] text-slate-500 leading-relaxed font-sans">
-                                Choose one of our verified, royalty-free high-resolution stock templates matching common automotive components:
-                              </p>
-                              <div className="grid grid-cols-2 xs:grid-cols-3 gap-2">
-                                {[
-                                  {
-                                    name: 'Engine Bay',
-                                    url: 'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop',
-                                    label: 'Engine Block / Headers'
-                                  },
-                                  {
-                                    name: 'Transmission',
-                                    url: 'https://images.unsplash.com/photo-1517524206127-48bbd363f3d7?q=80&w=600&auto=format&fit=crop',
-                                    label: 'Gears & Powertrain'
-                                  },
-                                  {
-                                    name: 'Brakes / Suspension',
-                                    url: 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?q=80&w=600&auto=format&fit=crop',
-                                    label: 'Rotors & Calipers'
-                                  },
-                                  {
-                                    name: 'Electrical / Alternator',
-                                    url: 'https://images.unsplash.com/photo-1619642751034-765dfdf7c58e?q=80&w=600&auto=format&fit=crop',
-                                    label: 'Alternators & Sensors'
-                                  },
-                                  {
-                                    name: 'Steering Components',
-                                    url: 'https://images.unsplash.com/photo-1511919884226-fd3cad34687c?q=80&w=600&auto=format&fit=crop',
-                                    label: 'Racks & Pinions'
-                                  },
-                                  {
-                                    name: 'Body / Body panels',
-                                    url: 'https://images.unsplash.com/photo-1617788138017-80ad40651399?q=80&w=600&auto=format&fit=crop',
-                                    label: 'Chassis & Moldings'
-                                  }
-                                ].map((preset) => {
-                                  const isActive = newPartImage === preset.url;
-                                  return (
-                                    <button
-                                      key={preset.name}
-                                      type="button"
-                                      onClick={() => setNewPartImage(preset.url)}
-                                      className={`relative h-20 rounded-lg overflow-hidden border-2 text-left group transition-all duration-200 ${
-                                        isActive
-                                          ? 'border-orange-600 ring-2 ring-orange-100'
-                                          : 'border-slate-200 hover:border-slate-300'
-                                      }`}
-                                    >
-                                      <img
-                                        src={preset.url}
-                                        alt={preset.name}
-                                        referrerPolicy="no-referrer"
-                                        className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
-                                      />
-                                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/30 to-transparent" />
-                                      <div className="absolute bottom-1.5 left-1.5 right-1.5">
-                                        <p className="font-bold text-[9px] text-white truncate font-mono uppercase tracking-tight">
-                                          {preset.name}
-                                        </p>
-                                        <p className="text-[8px] text-slate-300 truncate leading-none">
-                                          {preset.label}
-                                        </p>
-                                      </div>
-                                      {isActive && (
-                                        <div className="absolute top-1 right-1 bg-orange-600 text-white rounded-full p-0.5">
-                                          <svg className="w-2 h-2 fill-none stroke-current stroke-3" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                                          </svg>
-                                        </div>
-                                      )}
-                                    </button>
-                                  );
-                                })}
-                              </div>
+                      {partModalTab === 'manual' ? (
+                        /* Add parts manual spec form */
+                        <form onSubmit={handleCreatePart} className="space-y-3 text-xs overflow-y-auto pr-1">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-slate-500 font-semibold block">Component Name</label>
+                              <input
+                                type="text"
+                                required
+                                value={newPartName}
+                                onChange={(e) => setNewPartName(e.target.value)}
+                                placeholder="F150 Alternator Brembo Grade"
+                                className="w-full px-2 py-1.5 border rounded"
+                              />
                             </div>
-                          )}
+                            <div>
+                              <label className="text-slate-500 font-semibold block">Brand Supplier</label>
+                              <input
+                                type="text"
+                                required
+                                value={newPartBrand}
+                                onChange={(e) => setNewPartBrand(e.target.value)}
+                                placeholder="Ford OEM"
+                                className="w-full px-2 py-1.5 border rounded"
+                              />
+                            </div>
+                          </div>
 
-                          {imageUploadMethod === 'file' && (
-                            <div className="space-y-3">
-                              {/* Drag and Drop Container */}
-                              <div
-                                onDragOver={(e) => {
-                                  e.preventDefault();
-                                  setDragActive(true);
-                                }}
-                                onDragLeave={(e) => {
-                                  e.preventDefault();
-                                  setDragActive(false);
-                                }}
-                                onDrop={(e) => {
-                                  e.preventDefault();
-                                  setDragActive(false);
-                                  if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-                                    const file = e.dataTransfer.files[0];
-                                    const objectUrl = URL.createObjectURL(file);
-                                    setNewPartImage(objectUrl);
+                          <div className="grid grid-cols-3 gap-3">
+                            <div>
+                              <label className="text-slate-500 font-semibold block">Category</label>
+                              <select
+                                value={newPartCategory}
+                                onChange={(e) => {
+                                  const cat = e.target.value;
+                                  setNewPartCategory(cat);
+                                  if (imageUploadMethod === 'presets') {
+                                    if (cat === 'Engine') {
+                                      setNewPartImage('https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop');
+                                    } else if (cat === 'Transmission') {
+                                      setNewPartImage('https://images.unsplash.com/photo-1517524206127-48bbd363f3d7?q=80&w=600&auto=format&fit=crop');
+                                    } else if (cat === 'Brakes') {
+                                      setNewPartImage('https://images.unsplash.com/photo-1503376780353-7e6692767b70?q=80&w=600&auto=format&fit=crop');
+                                    } else if (cat === 'Electrical') {
+                                      setNewPartImage('https://images.unsplash.com/photo-1619642751034-765dfdf7c58e?q=80&w=600&auto=format&fit=crop');
+                                    } else {
+                                      setNewPartImage('https://images.unsplash.com/photo-1503376780353-7e6692767b70?q=80&w=600&auto=format&fit=crop');
+                                    }
                                   }
                                 }}
-                                className={`border-2 border-dashed rounded-lg p-5 text-center transition-all ${
-                                  dragActive
-                                    ? 'border-orange-500 bg-orange-50/20'
-                                    : 'border-slate-300 bg-white hover:border-slate-400'
+                                className="w-full px-2 py-1.5 border rounded bg-white"
+                              >
+                                <option value="Engine">Engine</option>
+                                <option value="Transmission">Transmission</option>
+                                <option value="Brakes">Brakes</option>
+                                <option value="Suspension">Suspension</option>
+                                <option value="Electrical">Electrical</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-slate-500 font-semibold block">Condition Quality</label>
+                              <select
+                                value={newPartCondition}
+                                onChange={(e) => setNewPartCondition(e.target.value as any)}
+                                className="w-full px-2 py-1.5 border rounded bg-white"
+                              >
+                                <option value="New">New</option>
+                                <option value="OEM Remanufactured">OEM Remanufactured</option>
+                                <option value="Used - Grade A">Used - Grade A</option>
+                                <option value="Used - Grade B">Used - Grade B</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-slate-500 font-semibold block">OEM Core Serial #</label>
+                              <input
+                                type="text"
+                                required
+                                value={newPartOem}
+                                onChange={(e) => setNewPartOem(e.target.value)}
+                                placeholder="TOY-12-FL"
+                                className="w-full px-2 py-1.5 border rounded"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-4 gap-3">
+                            <div>
+                              <label className="text-slate-500 font-semibold block">Price ($)</label>
+                              <input
+                                type="number"
+                                required
+                                value={newPartPrice}
+                                onChange={(e) => setNewPartPrice(parseFloat(e.target.value) || 0)}
+                                className="w-full px-2 py-1.5 border rounded"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-slate-500 font-semibold block">Sourcing Cost ($)</label>
+                              <input
+                                type="number"
+                                required
+                                value={newPartCost}
+                                onChange={(e) => setNewPartCost(parseFloat(e.target.value) || 0)}
+                                className="w-full px-2 py-1.5 border rounded"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-slate-500 font-semibold block">Stock qty</label>
+                              <input
+                                type="number"
+                                required
+                                value={newPartStock}
+                                onChange={(e) => setNewPartStock(parseInt(e.target.value) || 1)}
+                                className="w-full px-2 py-1.5 border rounded"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-slate-500 font-semibold block">Weight (lbs)</label>
+                              <input
+                                type="number"
+                                required
+                                value={newPartWeight}
+                                onChange={(e) => setNewPartWeight(parseFloat(e.target.value) || 10)}
+                                className="w-full px-2 py-1.5 border rounded"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-slate-500 font-semibold block">Aisle Location Shelf</label>
+                              <input
+                                type="text"
+                                value={newPartLocation}
+                                onChange={(e) => setNewPartLocation(e.target.value)}
+                                placeholder="Row 1, Aisle D, Shelf 4"
+                                className="w-full px-2 py-1.5 border rounded"
+                              />
+                            </div>
+                          </div>
+
+                          {/* ======================= FILE UPLOAD & IMAGE SELECTION MODULE ======================= */}
+                          <div className="bg-slate-50 border border-slate-200 p-3 rounded-lg space-y-3">
+                            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                              <label className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-slate-700">
+                                Product Catalog Media Selection
+                              </label>
+                              <span className="text-[9px] font-medium bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded uppercase font-mono">
+                                Required
+                              </span>
+                            </div>
+
+                            {/* Image Method Switcher Tabs */}
+                            <div className="flex border-b border-slate-200">
+                              <button
+                                type="button"
+                                onClick={() => setImageUploadMethod('presets')}
+                                className={`flex-1 py-1 text-center font-bold font-mono text-[10px] uppercase border-b-2 transition ${
+                                  imageUploadMethod === 'presets'
+                                    ? 'border-orange-600 text-orange-600'
+                                    : 'border-transparent text-slate-500 hover:text-slate-800'
                                 }`}
                               >
-                                <input
-                                  type="file"
-                                  id="part-file-uploader"
-                                  accept="image/*"
-                                  className="hidden"
-                                  onChange={(e) => {
-                                    if (e.target.files && e.target.files[0]) {
-                                      const file = e.target.files[0];
+                                Preset Library
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setImageUploadMethod('file')}
+                                className={`flex-1 py-1 text-center font-bold font-mono text-[10px] uppercase border-b-2 transition ${
+                                  imageUploadMethod === 'file'
+                                    ? 'border-orange-600 text-orange-600'
+                                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                                }`}
+                              >
+                                Drag & Drop Upload
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setImageUploadMethod('url')}
+                                className={`flex-1 py-1 text-center font-bold font-mono text-[10px] uppercase border-b-2 transition ${
+                                  imageUploadMethod === 'url'
+                                    ? 'border-orange-600 text-orange-600'
+                                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                                }`}
+                              >
+                                External Web URL
+                              </button>
+                            </div>
+
+                            {/* Actionable Panels */}
+                            {imageUploadMethod === 'presets' && (
+                              <div className="space-y-2">
+                                <p className="text-[10px] text-slate-500 leading-relaxed font-sans">
+                                  Choose one of our verified, royalty-free high-resolution stock templates matching common automotive components:
+                                </p>
+                                <div className="grid grid-cols-2 xs:grid-cols-3 gap-2">
+                                  {[
+                                    {
+                                      name: 'Engine Bay',
+                                      url: 'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop',
+                                      label: 'Engine Block / Headers'
+                                    },
+                                    {
+                                      name: 'Transmission',
+                                      url: 'https://images.unsplash.com/photo-1517524206127-48bbd363f3d7?q=80&w=600&auto=format&fit=crop',
+                                      label: 'Gears & Powertrain'
+                                    },
+                                    {
+                                      name: 'Brakes / Suspension',
+                                      url: 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?q=80&w=600&auto=format&fit=crop',
+                                      label: 'Rotors & Calipers'
+                                    },
+                                    {
+                                      name: 'Electrical / Alternator',
+                                      url: 'https://images.unsplash.com/photo-1619642751034-765dfdf7c58e?q=80&w=600&auto=format&fit=crop',
+                                      label: 'Alternators & Sensors'
+                                    },
+                                    {
+                                      name: 'Steering Components',
+                                      url: 'https://images.unsplash.com/photo-1511919884226-fd3cad34687c?q=80&w=600&auto=format&fit=crop',
+                                      label: 'Racks & Pinions'
+                                    },
+                                    {
+                                      name: 'Body / Body panels',
+                                      url: 'https://images.unsplash.com/photo-1617788138017-80ad40651399?q=80&w=600&auto=format&fit=crop',
+                                      label: 'Chassis & Moldings'
+                                    }
+                                  ].map((preset) => {
+                                    const isActive = newPartImage === preset.url;
+                                    return (
+                                      <button
+                                        key={preset.name}
+                                        type="button"
+                                        onClick={() => setNewPartImage(preset.url)}
+                                        className={`relative h-20 rounded-lg overflow-hidden border-2 text-left group transition-all duration-200 ${
+                                          isActive
+                                            ? 'border-orange-600 ring-2 ring-orange-100'
+                                            : 'border-slate-200 hover:border-slate-300'
+                                        }`}
+                                      >
+                                        <img
+                                          src={preset.url}
+                                          alt={preset.name}
+                                          referrerPolicy="no-referrer"
+                                          className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
+                                        />
+                                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/30 to-transparent" />
+                                        <div className="absolute bottom-1.5 left-1.5 right-1.5">
+                                          <p className="font-bold text-[9px] text-white truncate font-mono uppercase tracking-tight">
+                                            {preset.name}
+                                          </p>
+                                          <p className="text-[8px] text-slate-300 truncate leading-none">
+                                            {preset.label}
+                                          </p>
+                                        </div>
+                                        {isActive && (
+                                          <div className="absolute top-1 right-1 bg-orange-600 text-white rounded-full p-0.5">
+                                            <svg className="w-2 h-2 fill-none stroke-current stroke-3" viewBox="0 0 24 24">
+                                              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                                            </svg>
+                                          </div>
+                                        )}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {imageUploadMethod === 'file' && (
+                              <div className="space-y-3">
+                                {/* Drag and Drop Container */}
+                                <div
+                                  onDragOver={(e) => {
+                                    e.preventDefault();
+                                    setDragActive(true);
+                                  }}
+                                  onDragLeave={(e) => {
+                                    e.preventDefault();
+                                    setDragActive(false);
+                                  }}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    setDragActive(false);
+                                    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                                      const file = e.dataTransfer.files[0];
                                       const objectUrl = URL.createObjectURL(file);
                                       setNewPartImage(objectUrl);
                                     }
                                   }}
-                                />
-                                <label
-                                  htmlFor="part-file-uploader"
-                                  className="cursor-pointer block space-y-2 py-2"
+                                  className={`border-2 border-dashed rounded-lg p-5 text-center transition-all ${
+                                    dragActive
+                                      ? 'border-orange-500 bg-orange-50/20'
+                                      : 'border-slate-300 bg-white hover:border-slate-400'
+                                  }`}
                                 >
-                                  <svg
-                                    className="mx-auto h-8 w-8 text-slate-400 animate-bounce"
-                                    fill="none"
-                                    viewBox="0 0 24 24"
-                                    stroke="currentColor"
-                                    strokeWidth={1.5}
+                                  <input
+                                    type="file"
+                                    id="part-file-uploader"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      if (e.target.files && e.target.files[0]) {
+                                        const file = e.target.files[0];
+                                        const objectUrl = URL.createObjectURL(file);
+                                        setNewPartImage(objectUrl);
+                                      }
+                                    }}
+                                  />
+                                  <label
+                                    htmlFor="part-file-uploader"
+                                    className="cursor-pointer block space-y-2 py-2"
                                   >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z"
-                                    />
-                                  </svg>
-                                  <div className="text-[11px] text-slate-600">
-                                    <span className="font-semibold text-orange-600 hover:text-orange-700">
-                                      Click to select a file
-                                    </span>{' '}
-                                    or drag-and-drop right here
-                                  </div>
-                                  <p className="text-[9px] text-slate-400">
-                                    PNG, JPG, GIF up to 10MB sizes allowed
-                                  </p>
+                                    <svg
+                                      className="mx-auto h-8 w-8 text-slate-400 animate-bounce"
+                                      fill="none"
+                                      viewBox="0 0 24 24"
+                                      stroke="currentColor"
+                                      strokeWidth={1.5}
+                                    >
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z"
+                                      />
+                                    </svg>
+                                    <div className="text-[11px] text-slate-600">
+                                      <span className="font-semibold text-orange-600 hover:text-orange-700">
+                                        Click to select a file
+                                      </span>{' '}
+                                      or drag-and-drop right here
+                                    </div>
+                                    <p className="text-[9px] text-slate-400">
+                                      PNG, JPG, GIF up to 10MB sizes allowed
+                                    </p>
+                                  </label>
+                                </div>
+                              </div>
+                            )}
+
+                            {imageUploadMethod === 'url' && (
+                              <div className="space-y-2">
+                                <label className="text-slate-500 font-semibold block text-[10px]">
+                                  Custom Image Direct Link
                                 </label>
-                              </div>
-                            </div>
-                          )}
-
-                          {imageUploadMethod === 'url' && (
-                            <div className="space-y-2">
-                              <label className="text-slate-500 font-semibold block text-[10px]">
-                                Custom Image Direct Link
-                              </label>
-                              <div className="flex gap-2">
-                                <input
-                                  type="url"
-                                  placeholder="https://images.unsplash.com/... or base64 stream"
-                                  value={newPartImage.startsWith('blob:') ? '' : newPartImage}
-                                  onChange={(e) => setNewPartImage(e.target.value)}
-                                  className="flex-1 px-2.5 py-1.5 border rounded-lg text-xs font-mono"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setNewPartImage(
-                                      'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop'
-                                    )
-                                  }
-                                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] rounded-lg font-mono uppercase shrink-0 font-bold"
-                                >
-                                  Reset Default
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Image Preview Window */}
-                          {newPartImage && (
-                            <div className="border border-slate-200 rounded-lg p-2.5 bg-white flex items-center gap-3.5">
-                              <div className="w-14 h-14 rounded-md overflow-hidden bg-slate-100 border border-slate-200/60 shrink-0 relative">
-                                <img
-                                  src={newPartImage}
-                                  alt="Part Preview"
-                                  referrerPolicy="no-referrer"
-                                  className="w-full h-full object-cover"
-                                  onError={(e) => {
-                                    e.currentTarget.src =
-                                      'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop';
-                                  }}
-                                />
-                              </div>
-                              <div className="text-left py-0.5 space-y-0.5 flex-1 min-w-0">
-                                <p className="text-[10px] font-bold text-slate-900 font-mono uppercase tracking-tight">
-                                  Current Selector Preview
-                                </p>
-                                <p className="text-[8px] text-slate-400 truncate leading-none font-mono">
-                                  {newPartImage}
-                                </p>
-                                <div className="flex items-center gap-2 mt-1">
-                                  <span className="text-[7.5px] px-1 bg-green-100 text-green-700 rounded-sm font-semibold uppercase tracking-wide">
-                                    Ready to commit
-                                  </span>
+                                <div className="flex gap-2">
+                                  <input
+                                    type="url"
+                                    placeholder="https://images.unsplash.com/... or base64 stream"
+                                    value={newPartImage.startsWith('blob:') ? '' : newPartImage}
+                                    onChange={(e) => setNewPartImage(e.target.value)}
+                                    className="flex-1 px-2.5 py-1.5 border rounded-lg text-xs font-mono"
+                                  />
                                   <button
                                     type="button"
                                     onClick={() =>
@@ -3839,70 +4465,218 @@ export default function CrmPortal({
                                         'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop'
                                       )
                                     }
-                                    className="text-[8px] text-red-600 hover:text-red-700 font-bold uppercase tracking-wider font-mono"
+                                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] rounded-lg font-mono uppercase shrink-0 font-bold"
                                   >
-                                    Remove / Clear
+                                    Reset Default
                                   </button>
                                 </div>
                               </div>
+                            )}
+
+                            {newPartImage && (
+                              <div className="border border-slate-200 rounded-lg p-2.5 bg-white flex items-center gap-3.5">
+                                <div className="w-14 h-14 rounded-md overflow-hidden bg-slate-100 border border-slate-200/60 shrink-0 relative">
+                                  <img
+                                    src={newPartImage}
+                                    alt="Part Preview"
+                                    referrerPolicy="no-referrer"
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => {
+                                      e.currentTarget.src =
+                                        'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop';
+                                    }}
+                                  />
+                                </div>
+                                <div className="text-left py-0.5 space-y-0.5 flex-1 min-w-0">
+                                  <p className="text-[10px] font-bold text-slate-900 font-mono uppercase tracking-tight">
+                                    Current Selector Preview
+                                  </p>
+                                  <p className="text-[8px] text-slate-400 truncate leading-none font-mono">
+                                    {newPartImage}
+                                  </p>
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <span className="text-[7.5px] px-1 bg-green-100 text-green-700 rounded-sm font-semibold uppercase tracking-wide">
+                                      Ready to commit
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setNewPartImage(
+                                          'https://images.unsplash.com/photo-1486006920555-c77dce18193b?q=80&w=600&auto=format&fit=crop'
+                                        )
+                                      }
+                                      className="text-[8px] text-red-600 hover:text-red-700 font-bold uppercase tracking-wider font-mono"
+                                    >
+                                      Remove / Clear
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Customizable Fitment Keys Area block */}
+                          <div className="bg-sky-50 border border-sky-100 p-3.5 rounded-lg space-y-3">
+                            <label className="block text-sky-950 font-extrabold uppercase font-mono tracking-wider text-[10px]">Customized Vehicle Fitment Keys Spec Matrix</label>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-slate-500 font-semibold block text-[10px]">Year Start Span</label>
+                                <input
+                                  type="number"
+                                  value={newPartFitYearStart}
+                                  onChange={(e) => setNewPartFitYearStart(parseInt(e.target.value) || 2015)}
+                                  className="w-full px-2 py-1 border rounded"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-slate-500 font-semibold block text-[10px]">Year End Span</label>
+                                <input
+                                  type="number"
+                                  value={newPartFitYearEnd}
+                                  onChange={(e) => setNewPartFitYearEnd(parseInt(e.target.value) || 2025)}
+                                  className="w-full px-2 py-1 border rounded"
+                                />
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-slate-500 font-semibold block text-[10px]">Make Manufacturer</label>
+                                <input
+                                  type="text"
+                                  placeholder="Subaru / Ford / BMW"
+                                  value={newPartFitMake}
+                                  onChange={(e) => setNewPartFitMake(e.target.value)}
+                                  className="w-full px-2 py-1 border rounded"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-slate-500 font-semibold block text-[10px]">Models list (comma separated)</label>
+                                <input
+                                  type="text"
+                                  placeholder="Outback, WRX, Legacy"
+                                  value={newPartFitModels}
+                                  onChange={(e) => setNewPartFitModels(e.target.value)}
+                                  className="w-full px-2 py-1 border rounded"
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="submit"
+                            className="w-full py-2.5 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-mono text-[10px] uppercase font-bold tracking-wider rounded-lg transition duration-200 cursor-pointer text-center"
+                          >
+                            ✓ Commit Component to Live Slices
+                          </button>
+                        </form>
+                      ) : (
+                        /* Excel/CSV spreadsheet importing tab view */
+                        <div className="space-y-4 text-xs font-mono overflow-y-auto pr-1">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                              <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block">
+                                Import Spreadsheet Database
+                              </label>
+                              <div className="border-2 border-dashed border-orange-200 bg-orange-50/20 p-8 rounded-xl hover:bg-orange-50/45 relative cursor-pointer text-center group transition">
+                                <input
+                                  type="file"
+                                  accept=".csv,.json"
+                                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      const reader = new FileReader();
+                                      reader.onload = (evt) => {
+                                        const textVal = evt.target?.result as string;
+                                        if (textVal) handleInventoryCSVUpload(textVal);
+                                      };
+                                      reader.readAsText(file);
+                                    }
+                                  }}
+                                />
+                                <p className="font-extrabold text-orange-700 text-xs group-hover:underline">📂 Upload Parts CSV / JSON</p>
+                                <p className="text-[9px] text-slate-400 mt-1">Select spreadsheet or serialized JSON file of catalog matrix</p>
+                              </div>
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-widest block">
+                                Paste CSV Raw Rows
+                              </label>
+                              <textarea
+                                rows={4}
+                                placeholder="Name,Brand,Category,Condition,Price,Cost,Stock,OEMNumber,Sku,Location,Description&#10;Intercooler Pipe,Turbo Brand,Engine,New,150.00,80.00,10,INT-C-44,SKU-902,Aisle B,Anodized custom piping"
+                                onChange={(e) => handleInventoryCSVUpload(e.target.value)}
+                                className="w-full text-[10px] p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 font-mono"
+                              />
+                            </div>
+                          </div>
+
+                          {inventoryUploadError && (
+                            <div className="bg-red-50 border border-red-200 text-red-700 p-2.5 rounded-lg text-[10px] font-bold">
+                              ⚠️ {inventoryUploadError}
+                            </div>
+                          )}
+
+                          {inventoryUploadPreview && inventoryUploadPreview.length > 0 ? (
+                            <div className="space-y-3 pt-2">
+                              <div className="flex justify-between items-center bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
+                                <span className="font-bold text-orange-850 uppercase text-[10px]">
+                                  ✓ Spreadsheet Parsed: {inventoryUploadPreview.length} Component Records Detected
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setInventoryUploadPreview(null)}
+                                  className="text-orange-700 hover:underline text-[9px] font-bold uppercase"
+                                >
+                                  Reset Upload
+                                </button>
+                              </div>
+
+                              <div className="overflow-x-auto max-h-40 border border-slate-200 rounded-lg">
+                                <table className="w-full text-left text-[9px] border-collapse bg-slate-50">
+                                  <thead className="bg-slate-200 text-slate-700 font-mono uppercase sticky top-0">
+                                    <tr>
+                                      <th className="p-2 border-b">Name</th>
+                                      <th className="p-2 border-b">Brand</th>
+                                      <th className="p-2 border-b">Category</th>
+                                      <th className="p-2 border-b">Condition</th>
+                                      <th className="p-2 border-b">Price ($)</th>
+                                      <th className="p-2 border-b">Units</th>
+                                      <th className="p-2 border-b">OEM Core</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {inventoryUploadPreview.map((item, i) => (
+                                      <tr key={i} className="hover:bg-slate-100 border-b border-slate-200 bg-white">
+                                        <td className="p-2 font-bold text-slate-900 truncate max-w-[120px]">{item.name}</td>
+                                        <td className="p-2 text-slate-600 truncate max-w-[80px]">{item.brand}</td>
+                                        <td className="p-2 text-slate-600">{item.category}</td>
+                                        <td className="p-2 text-slate-600">{item.condition}</td>
+                                        <td className="p-2 text-slate-950 font-black">${item.price}</td>
+                                        <td className="p-2 text-slate-650 font-mono font-bold">{item.stock} qty</td>
+                                        <td className="p-2 text-slate-600 font-mono">{item.oemNumber}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={handleCommitInventoryUpload}
+                                className="w-full py-2.5 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-mono text-[10px] uppercase font-bold tracking-wider rounded-lg transition duration-200 cursor-pointer flex items-center justify-center gap-1 shadow-md shadow-orange-950/20"
+                              >
+                                📥 Sync & Commit {inventoryUploadPreview.length} Components To Live Catalog
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="text-center p-6 bg-slate-50 border border-slate-200 border-dashed rounded-xl text-slate-400">
+                              <p className="font-mono text-[10px]">No active spreadsheet staged. Drag & Drop or paste raw CSV above to begin.</p>
                             </div>
                           )}
                         </div>
-
-                        {/* Customizable Fitment Keys Area block */}
-                        <div className="bg-sky-50 border border-sky-100 p-3.5 rounded-lg space-y-3">
-                          <label className="block text-sky-950 font-extrabold uppercase font-mono tracking-wider text-[10px]">Customized Vehicle Fitment Keys Spec Matrix</label>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="text-slate-500 font-semibold block text-[10px]">Year Start Span</label>
-                              <input
-                                type="number"
-                                value={newPartFitYearStart}
-                                onChange={(e) => setNewPartFitYearStart(parseInt(e.target.value) || 2015)}
-                                className="w-full px-2 py-1 border rounded"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-slate-500 font-semibold block text-[10px]">Year End Span</label>
-                              <input
-                                type="number"
-                                value={newPartFitYearEnd}
-                                onChange={(e) => setNewPartFitYearEnd(parseInt(e.target.value) || 2025)}
-                                className="w-full px-2 py-1 border rounded"
-                              />
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="text-slate-500 font-semibold block text-[10px]">Make Manufacturer</label>
-                              <input
-                                type="text"
-                                placeholder="Subaru / Ford / BMW"
-                                value={newPartFitMake}
-                                onChange={(e) => setNewPartFitMake(e.target.value)}
-                                className="w-full px-2 py-1 border rounded"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-slate-500 font-semibold block text-[10px]">Models list (comma separated)</label>
-                              <input
-                                type="text"
-                                placeholder="Outback, WRX, Legacy"
-                                value={newPartFitModels}
-                                onChange={(e) => setNewPartFitModels(e.target.value)}
-                                className="w-full px-2 py-1 border rounded"
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        <button
-                          type="submit"
-                          className="w-full py-2 bg-orange-600 text-white font-bold text-xs rounded-lg"
-                        >
-                          Commit Component to Live Slices
-                        </button>
-                      </form>
+                      )}
                     </motion.div>
                   </>
                 )}
